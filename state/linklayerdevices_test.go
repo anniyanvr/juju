@@ -658,6 +658,7 @@ func (s *linkLayerDevicesStateSuite) TestAddAddressOps(c *gc.C) {
 		DeviceName:  "", // Not required.
 		CIDRAddress: "10.1.1.1/24",
 		Origin:      corenetwork.OriginMachine,
+		IsSecondary: true,
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -670,7 +671,8 @@ func (s *linkLayerDevicesStateSuite) TestAddAddressOps(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 
 	c.Assert(addrs, gc.HasLen, 1)
-	c.Assert(addrs[0].Value(), gc.Equals, "10.1.1.1")
+	c.Check(addrs[0].Value(), gc.Equals, "10.1.1.1")
+	c.Check(addrs[0].IsSecondary(), gc.Equals, true)
 }
 
 func (s *linkLayerDevicesStateSuite) TestAddDeviceOpsWithAddresses(c *gc.C) {
@@ -692,10 +694,10 @@ func (s *linkLayerDevicesStateSuite) TestAddDeviceOpsWithAddresses(c *gc.C) {
 
 	state.RunTransaction(c, s.State, ops)
 
-	dev, err := s.machine.LinkLayerDevice(devName)
+	_, err = s.machine.LinkLayerDevice(devName)
 	c.Assert(err, jc.ErrorIsNil)
 
-	dev, err = s.machine.LinkLayerDevice("eth0")
+	dev, err := s.machine.LinkLayerDevice("eth0")
 	c.Assert(err, jc.ErrorIsNil)
 
 	addrs, err := dev.Addresses()
@@ -734,7 +736,7 @@ func (s *linkLayerDevicesStateSuite) createNICWithIP(c *gc.C, machine *state.Mac
 		state.LinkLayerDeviceAddress{
 			DeviceName:   deviceName,
 			CIDRAddress:  cidrAddress,
-			ConfigMethod: corenetwork.StaticAddress,
+			ConfigMethod: corenetwork.ConfigStatic,
 		},
 	)
 	c.Assert(err, jc.ErrorIsNil)
@@ -754,7 +756,7 @@ func (s *linkLayerDevicesStateSuite) createLoopbackNIC(c *gc.C, machine *state.M
 		state.LinkLayerDeviceAddress{
 			DeviceName:   "lo",
 			CIDRAddress:  "127.0.0.1/24",
-			ConfigMethod: corenetwork.StaticAddress,
+			ConfigMethod: corenetwork.ConfigStatic,
 		},
 	)
 	c.Assert(err, jc.ErrorIsNil)
@@ -774,7 +776,7 @@ func (s *linkLayerDevicesStateSuite) createBridgeWithIP(c *gc.C, machine *state.
 		state.LinkLayerDeviceAddress{
 			DeviceName:   bridgeName,
 			CIDRAddress:  cidrAddress,
-			ConfigMethod: corenetwork.StaticAddress,
+			ConfigMethod: corenetwork.ConfigStatic,
 		},
 	)
 	c.Assert(err, jc.ErrorIsNil)
@@ -1097,14 +1099,14 @@ func (s *linkLayerDevicesStateSuite) TestSetDeviceAddressesWithSubnetID(c *gc.C)
 	err = s.machine.SetDevicesAddresses(
 		state.LinkLayerDeviceAddress{
 			DeviceName:        "eth1",
-			ConfigMethod:      corenetwork.StaticAddress,
+			ConfigMethod:      corenetwork.ConfigStatic,
 			ProviderNetworkID: "vpc-abcd",
 			ProviderSubnetID:  "prov-ffff",
 			CIDRAddress:       "10.20.0.42/24",
 		},
 		state.LinkLayerDeviceAddress{
 			DeviceName:        "eth2",
-			ConfigMethod:      corenetwork.StaticAddress,
+			ConfigMethod:      corenetwork.ConfigStatic,
 			ProviderNetworkID: "vpc-abcd",
 			ProviderSubnetID:  "prov-abcd",
 			CIDRAddress:       "10.30.0.99/24",
@@ -1112,7 +1114,7 @@ func (s *linkLayerDevicesStateSuite) TestSetDeviceAddressesWithSubnetID(c *gc.C)
 	)
 	c.Assert(err, jc.ErrorIsNil)
 
-	allAddr, err := s.machine.AllAddresses()
+	allAddr, err := s.machine.AllDeviceAddresses()
 	c.Assert(err, gc.IsNil)
 
 	expSubnetID := map[string]corenetwork.Id{

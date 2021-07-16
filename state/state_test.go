@@ -616,9 +616,9 @@ func (s *MultiModelStateSuite) TestWatchTwoModels(c *gc.C) {
 				c.Assert(err, jc.ErrorIsNil)
 				m, err := st.Model()
 				c.Assert(err, jc.ErrorIsNil)
-				operationID, err := m.EnqueueOperation("a test")
+				operationID, err := m.EnqueueOperation("a test", 1)
 				c.Assert(err, jc.ErrorIsNil)
-				_, err = unit.AddAction(operationID, "snapshot", nil, nil, nil)
+				_, err = m.AddAction(unit, operationID, "snapshot", nil, nil, nil)
 				c.Assert(err, jc.ErrorIsNil)
 			},
 		}, {
@@ -1498,7 +1498,7 @@ func (s *StateSuite) TestSaveCloudServiceChangeAddressesAllGood(c *gc.C) {
 	c.Assert(svc.Addresses(), gc.DeepEquals, network.NewSpaceAddresses("2.2.2.2"))
 }
 
-func (s *StateSuite) TestSaveCloudServiceChangeProviderIdFailed(c *gc.C) {
+func (s *StateSuite) TestSaveCloudServiceChangeProviderId(c *gc.C) {
 	defer state.SetBeforeHooks(c, s.State, func() {
 		_, err := s.State.SaveCloudService(
 			state.SaveCloudServiceArgs{
@@ -1509,16 +1509,18 @@ func (s *StateSuite) TestSaveCloudServiceChangeProviderIdFailed(c *gc.C) {
 		)
 		c.Assert(err, jc.ErrorIsNil)
 	}).Check()
-	_, err := s.State.SaveCloudService(
+	svc, err := s.State.SaveCloudService(
 		state.SaveCloudServiceArgs{
 			Id:         "cloud-svc-ID",
 			ProviderId: "provider-id-new", // ProviderId is immutable, changing this will get assert error.
 			Addresses:  network.NewSpaceAddresses("1.1.1.1"),
 		},
 	)
-	c.Assert(err, gc.ErrorMatches,
-		`cannot add cloud service "provider-id-new": failed to save cloud service: state changing too quickly; try again soon`,
-	)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(svc.Refresh(), jc.ErrorIsNil)
+	c.Assert(svc.Id(), gc.Equals, "a#cloud-svc-ID")
+	c.Assert(svc.ProviderId(), gc.Equals, "provider-id-new")
+	c.Assert(svc.Addresses(), gc.DeepEquals, network.NewSpaceAddresses("1.1.1.1"))
 }
 
 func (s *StateSuite) TestAddApplication(c *gc.C) {
@@ -3302,9 +3304,9 @@ func (s *StateSuite) TestFindEntity(c *gc.C) {
 	app := s.AddTestingApplication(c, "ser-vice2", s.AddTestingCharm(c, "mysql"))
 	unit, err := app.AddUnit(state.AddUnitParams{})
 	c.Assert(err, jc.ErrorIsNil)
-	operationID, err := s.Model.EnqueueOperation("something")
+	operationID, err := s.Model.EnqueueOperation("something", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = unit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	_, err = s.Model.AddAction(unit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	s.Factory.MakeUser(c, &factory.UserParams{Name: "arble"})
 	c.Assert(err, jc.ErrorIsNil)
@@ -3383,9 +3385,9 @@ func (s *StateSuite) TestParseActionTag(c *gc.C) {
 	app := s.AddTestingApplication(c, "application2", s.AddTestingCharm(c, "dummy"))
 	u, err := app.AddUnit(state.AddUnitParams{})
 	c.Assert(err, jc.ErrorIsNil)
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	f, err := u.AddAction(operationID, "snapshot", nil, nil, nil)
+	f, err := s.Model.AddAction(u, operationID, "snapshot", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	action, err := s.Model.Action(f.Id())

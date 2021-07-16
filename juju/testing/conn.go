@@ -353,6 +353,7 @@ func (s *JujuConnSuite) APIInfo(c *gc.C) *api.Info {
 	c.Assert(err, jc.ErrorIsNil)
 	apiInfo.Tag = s.AdminUserTag(c)
 	apiInfo.Password = "dummy-secret"
+	apiInfo.ControllerUUID = s.ControllerConfig.ControllerUUID()
 	model, err := s.State.Model()
 	c.Assert(err, jc.ErrorIsNil)
 	apiInfo.ModelTag = model.ModelTag()
@@ -558,7 +559,7 @@ func (s *JujuConnSuite) setUpConn(c *gc.C) {
 	// Dummy provider uses a random port, which is added to cfg used to create environment.
 	apiPort := dummy.APIPort(environ.Provider())
 	s.ControllerConfig["api-port"] = apiPort
-	s.ProviderCallContext = envcontext.NewCloudCallContext()
+	s.ProviderCallContext = envcontext.NewCloudCallContext(context.Background())
 	err = bootstrap.Bootstrap(modelcmd.BootstrapContext(context.Background(), ctx), environ, s.ProviderCallContext, bootstrap.BootstrapParams{
 		ControllerConfig: s.ControllerConfig,
 		CloudRegion:      "dummy-region",

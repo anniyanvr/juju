@@ -15,7 +15,6 @@ import (
 	jujutxn "github.com/juju/txn/v2"
 
 	corenetwork "github.com/juju/juju/core/network"
-	"github.com/juju/juju/network"
 )
 
 // LinkLayerDevice returns the link-layer device matching the given name. An
@@ -501,7 +500,7 @@ type LinkLayerDeviceAddress struct {
 	DeviceName string
 
 	// ConfigMethod is the method used to configure this address.
-	ConfigMethod corenetwork.AddressConfigMethod
+	ConfigMethod corenetwork.AddressConfigType
 
 	// ProviderID is the provider-specific ID of the address. Empty when not
 	// supported. Cannot be changed once set to non-empty.
@@ -538,6 +537,10 @@ type LinkLayerDeviceAddress struct {
 	// It is used to determine whether the address is no longer recognised
 	// and is safe to remove.
 	Origin corenetwork.Origin
+
+	// IsSecondary if true, indicates that this address is
+	// not the primary address associated with the NIC.
+	IsSecondary bool
 }
 
 // TODO (manadart 2020-07-21): This is silly. We already received the args
@@ -567,6 +570,9 @@ func (a *LinkLayerDeviceAddress) addressAndSubnet() (string, string, error) {
 // - errors.NotValidError, when any of the fields in args contain invalid values;
 // - errors.NotFoundError, when any DeviceName in args refers to unknown device;
 // - ErrProviderIDNotUnique, when one or more specified ProviderIDs are not unique.
+//
+// Deprecated: (manadart 2021-05-04) This method is only used by tests and is in
+// the process of removal. Do not add new usages of it.
 func (m *Machine) SetDevicesAddresses(devicesAddresses ...LinkLayerDeviceAddress) (err error) {
 	defer errors.DeferredAnnotatef(&err, "cannot set link-layer device addresses of machine %q", m.doc.Id)
 	if len(devicesAddresses) == 0 {
@@ -640,10 +646,6 @@ func (m *Machine) validateSetDevicesAddressesArgs(args *LinkLayerDeviceAddress) 
 	}
 	if err := m.verifyDeviceAlreadyExists(args.DeviceName); err != nil {
 		return errors.Trace(err)
-	}
-
-	if !corenetwork.IsValidAddressConfigMethod(string(args.ConfigMethod)) {
-		return errors.NotValidf("ConfigMethod %q", args.ConfigMethod)
 	}
 
 	if args.GatewayAddress != "" {
@@ -843,12 +845,12 @@ func (m *Machine) removeAllAddressesOps() ([]txn.Op, error) {
 	return m.st.removeMatchingIPAddressesDocOps(findQuery)
 }
 
-// AllAddresses returns the all addresses assigned to all devices of the
-// machine.
-func (m *Machine) AllAddresses() ([]*Address, error) {
+// AllDeviceAddresses returns all known addresses assigned to
+// link-layer devices on the machine.
+func (m *Machine) AllDeviceAddresses() ([]*Address, error) {
 	var allAddresses []*Address
-	callbackFunc := func(resultDoc *ipAddressDoc) {
-		allAddresses = append(allAddresses, newIPAddress(m.st, *resultDoc))
+	callbackFunc := func(doc *ipAddressDoc) {
+		allAddresses = append(allAddresses, newIPAddress(m.st, *doc))
 	}
 
 	findQuery := findAddressesQuery(m.doc.Id, "")
@@ -858,47 +860,34 @@ func (m *Machine) AllAddresses() ([]*Address, error) {
 	return allAddresses, nil
 }
 
-// AllSpaces returns the set of spaceIDs that this machine is actively
-// connected to.
+// AllSpaces returns the set of spaceIDs that this machine is
+// actively connected to.
+// TODO(jam): 2016-12-18 This should evolve to look at the
+// LinkLayerDevices directly, instead of using the Addresses
+// the devices are in to link back to spaces.
 func (m *Machine) AllSpaces() (set.Strings, error) {
-	// TODO(jam): 2016-12-18 This should evolve to look at the
-	// LinkLayerDevices directly, instead of using the Addresses the devices
-	// are in to link back to spaces.
+	subnets, err := m.st.AllSubnets()
+	if err != nil {
+		return nil, errors.Annotate(err, "retrieving subnets")
+	}
+
 	spaces := set.NewStrings()
-	addresses, err := m.AllAddresses()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, address := range addresses {
-		subnet, err := address.Subnet()
-		if err != nil {
-			if errors.IsNotFound(err) {
-				// We don't know what this subnet is, so it can't be a space. It
-				// might just be the loopback device.
-				continue
-			}
-			return nil, errors.Trace(err)
+	callback := func(doc *ipAddressDoc) {
+		// Don't bother with these. They are not in a space.
+		if doc.ConfigMethod == corenetwork.ConfigLoopback || doc.SubnetCIDR == "" {
+			return
 		}
-		spaces.Add(subnet.SpaceID())
-	}
-	logger.Tracef("machine %q found AllSpaces() = %s",
-		m.Id(), network.QuoteSpaceSet(spaces))
-	return spaces, nil
-}
 
-// AllNetworkAddresses returns the result of AllAddresses(), but transformed to
-// []network.Address.
-func (m *Machine) AllNetworkAddresses() (corenetwork.SpaceAddresses, error) {
-	stateAddresses, err := m.AllAddresses()
-	if err != nil {
+		for _, sub := range subnets {
+			if sub.CIDR() == doc.SubnetCIDR {
+				spaces.Add(sub.spaceID)
+				break
+			}
+		}
+	}
+	if err := m.st.forEachIPAddressDoc(findAddressesQuery(m.doc.Id, ""), callback); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	networkAddresses := make(corenetwork.SpaceAddresses, len(stateAddresses))
-	for i := range stateAddresses {
-		networkAddresses[i] = stateAddresses[i].NetworkAddress()
-	}
-	// TODO(jam): 20161130 NetworkAddress object has a SpaceName attribute.
-	// However, we are not filling in that information here.
-	return networkAddresses, nil
+	return spaces, nil
 }

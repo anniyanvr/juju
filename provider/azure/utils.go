@@ -4,11 +4,10 @@
 package azure
 
 import (
-	stdcontext "context"
 	"math/rand"
 	"net/http"
 
-	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2018-05-01/resources"
+	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2020-06-01/resources"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/juju/errors"
@@ -69,15 +68,15 @@ func isForbiddenResult(resp autorest.Response) bool {
 // Management API, because the API version requested must match the
 // type of the resource being manipulated through the API, rather than
 // the API version specified statically in the resource client code.
-func collectAPIVersions(ctx context.ProviderCallContext, sdkCtx stdcontext.Context, client resources.ProvidersClient) (map[string]string, error) {
+func collectAPIVersions(ctx context.ProviderCallContext, client resources.ProvidersClient) (map[string]string, error) {
 	result := make(map[string]string)
 
 	var res resources.ProviderListResultIterator
-	res, err := client.ListComplete(sdkCtx, nil, "")
+	res, err := client.ListComplete(ctx, nil, "")
 	if err != nil {
 		return result, errorutils.HandleCredentialError(errors.Trace(err), ctx)
 	}
-	for ; res.NotDone(); err = res.NextWithContext(sdkCtx) {
+	for ; res.NotDone(); err = res.NextWithContext(ctx) {
 		if err != nil {
 			return map[string]string{}, errorutils.HandleCredentialError(errors.Trace(err), ctx)
 		}

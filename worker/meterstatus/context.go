@@ -41,7 +41,11 @@ func newLimitedContext(config hookConfig) *limitedContext {
 }
 
 // HookVars implements runner.Context.
-func (ctx *limitedContext) HookVars(paths context.Paths, remote bool, getEnv context.GetEnvFunc) ([]string, error) {
+func (ctx *limitedContext) HookVars(
+	paths context.Paths,
+	remote bool,
+	envVars context.Environmenter,
+) ([]string, error) {
 	vars := []string{
 		"CHARM_DIR=" + paths.GetCharmDir(), // legacy
 		"JUJU_CHARM_DIR=" + paths.GetCharmDir(),
@@ -58,7 +62,7 @@ func (ctx *limitedContext) HookVars(paths context.Paths, remote bool, getEnv con
 	for key, val := range ctx.env {
 		vars = append(vars, fmt.Sprintf("%s=%s", key, val))
 	}
-	return append(vars, context.OSDependentEnvVars(paths, getEnv)...), nil
+	return append(vars, context.OSDependentEnvVars(paths, envVars)...), nil
 }
 
 // GetLogger returns the logger for the specified module.

@@ -6,16 +6,13 @@ package deployer
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/juju/bundlechanges/v5"
 	"github.com/juju/charm/v9"
 	"github.com/juju/charm/v9/resource"
-	"github.com/juju/charmrepo/v7"
 	jujuclock "github.com/juju/clock"
 	"github.com/juju/cmd"
 	"github.com/juju/collections/set"
@@ -35,6 +32,8 @@ import (
 	"github.com/juju/juju/cmd/juju/application/store"
 	"github.com/juju/juju/cmd/juju/application/utils"
 	"github.com/juju/juju/cmd/modelcmd"
+	"github.com/juju/juju/core/arch"
+	bundlechanges "github.com/juju/juju/core/bundle/changes"
 	corecharm "github.com/juju/juju/core/charm"
 	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/core/crossmodel"
@@ -42,7 +41,6 @@ import (
 	"github.com/juju/juju/core/instance"
 	"github.com/juju/juju/core/lxdprofile"
 	"github.com/juju/juju/core/model"
-	"github.com/juju/juju/core/series"
 	"github.com/juju/juju/environs/config"
 	"github.com/juju/juju/resource/resourceadapters"
 	"github.com/juju/juju/state/watcher"
@@ -87,9 +85,9 @@ type bundleDeploySpec struct {
 //
 // Note: deployBundle expects that spec.BundleData points to a verified bundle
 // that has all required external overlays applied.
-func bundleDeploy(bundleData *charm.BundleData, spec bundleDeploySpec) (map[charm.URL]*macaroon.Macaroon, error) {
+func bundleDeploy(defaultCharmSchema charm.Schema, bundleData *charm.BundleData, spec bundleDeploySpec) (map[charm.URL]*macaroon.Macaroon, error) {
 	// TODO: move bundle parsing and checking into the handler.
-	h := makeBundleHandler(bundleData, spec)
+	h := makeBundleHandler(defaultCharmSchema, bundleData, spec)
 	if err := h.makeModel(spec.useExistingMachines, spec.bundleMachines); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -208,9 +206,12 @@ type bundleHandler struct {
 	// accountUser holds the user of the account associated with the
 	// current controller.
 	accountUser string
+
+	// The default schema to use for charm URLs that don't specify one.
+	defaultCharmSchema charm.Schema
 }
 
-func makeBundleHandler(bundleData *charm.BundleData, spec bundleDeploySpec) *bundleHandler {
+func makeBundleHandler(defaultCharmSchema charm.Schema, bundleData *charm.BundleData, spec bundleDeploySpec) *bundleHandler {
 	applications := set.NewStrings()
 	for name := range bundleData.Applications {
 		applications.Add(name)
@@ -246,6 +247,8 @@ func makeBundleHandler(bundleData *charm.BundleData, spec bundleDeploySpec) *bun
 		targetModelUUID: spec.targetModelUUID,
 		controllerName:  spec.controllerName,
 		accountUser:     spec.accountUser,
+
+		defaultCharmSchema: defaultCharmSchema,
 	}
 }
 
@@ -324,7 +327,7 @@ func (h *bundleHandler) resolveCharmsAndEndpoints() error {
 			continue
 		}
 
-		ch, err := resolveAndValidateCharmURL(spec.Charm)
+		ch, err := resolveAndValidateCharmURL(spec.Charm, h.defaultCharmSchema)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -333,7 +336,7 @@ func (h *bundleHandler) resolveCharmsAndEndpoints() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		url, origin, _, err := h.bundleResolver.ResolveCharm(ch, origin)
+		url, origin, _, err := h.bundleResolver.ResolveCharm(ch, origin, false) // no --switch possible.
 		if err != nil {
 			return errors.Annotatef(err, "cannot resolve charm or bundle %q", ch.Name)
 		}
@@ -388,7 +391,7 @@ func (h *bundleHandler) resolveCharmChannelAndRevision(charmURL, charmSeries, ch
 	}
 
 	// Resolve and validate a charm URL based on passed in charm.
-	ch, err := resolveAndValidateCharmURL(charmURL)
+	ch, err := resolveAndValidateCharmURL(charmURL, h.defaultCharmSchema)
 	if err != nil {
 		return "", -1, errors.Trace(err)
 	}
@@ -403,7 +406,7 @@ func (h *bundleHandler) resolveCharmChannelAndRevision(charmURL, charmSeries, ch
 		return "", -1, errors.Trace(err)
 	}
 
-	_, origin, _, err = h.bundleResolver.ResolveCharm(ch, origin)
+	_, origin, _, err = h.bundleResolver.ResolveCharm(ch, origin, false) // no --switch possible.
 	if err != nil {
 		return "", -1, errors.Annotatef(err, "cannot resolve charm or bundle %q", ch.Name)
 	}
@@ -564,11 +567,11 @@ func (h *bundleHandler) addCharm(change *bundlechanges.AddCharmChange) error {
 	id := change.Id()
 	chParams := change.Params
 
-	// Use the series specified for this charm in the bundle,
-	// fallback to the series specified for the bundle.
-	series := chParams.Series
-	if series == "" {
-		series = h.data.Series
+	// Use the chSeries specified for this charm in the bundle,
+	// fallback to the chSeries specified for the bundle.
+	chSeries := chParams.Series
+	if chSeries == "" {
+		chSeries = h.data.Series
 	}
 
 	// First attempt to interpret as a local path.
@@ -588,33 +591,32 @@ func (h *bundleHandler) addCharm(change *bundlechanges.AddCharmChange) error {
 			charmPath = filepath.Join(h.bundleDir, charmPath)
 		}
 
-		ch, curl, err := charmrepo.NewCharmAtPathForceSeries(charmPath, series, h.force)
-		if err != nil && !os.IsNotExist(err) {
+		ch, curl, err := corecharm.NewCharmAtPathForceSeries(charmPath, chSeries, h.force)
+		if err != nil {
 			return errors.Annotatef(err, "cannot deploy local charm at %q", charmPath)
 		}
-		if err == nil {
-			if err := lxdprofile.ValidateLXDProfile(lxdCharmProfiler{
-				Charm: ch,
-			}); err != nil && !h.force {
-				return errors.Annotatef(err, "cannot deploy local charm at %q", charmPath)
-			}
-			if curl, err = h.deployAPI.AddLocalCharm(curl, ch, h.force); err != nil {
-				return err
-			}
-			logger.Debugf("added charm %s", curl)
-			h.results[id] = curl.String()
-			// We know we're a local charm and local charms don't require an
-			// explicit tailored origin. Instead we can just use a placeholder
-			// to ensure correctness for later on in addApplication.
-			h.addOrigin(*curl, corecharm.DefaultRiskChannel, commoncharm.Origin{
-				Source: commoncharm.OriginLocal,
-			})
-			return nil
+
+		if err := lxdprofile.ValidateLXDProfile(lxdCharmProfiler{
+			Charm: ch,
+		}); err != nil && !h.force {
+			return errors.Annotatef(err, "cannot deploy local charm at %q", charmPath)
 		}
+		if curl, err = h.deployAPI.AddLocalCharm(curl, ch, h.force); err != nil {
+			return err
+		}
+		logger.Debugf("added charm %s", curl)
+		h.results[id] = curl.String()
+		// We know we're a local charm and local charms don't require an
+		// explicit tailored origin. Instead we can just use a placeholder
+		// to ensure correctness for later on in addApplication.
+		h.addOrigin(*curl, corecharm.DefaultRiskChannel, commoncharm.Origin{
+			Source: commoncharm.OriginLocal,
+		})
+		return nil
 	}
 
 	// Not a local charm, so grab from the store.
-	ch, err := resolveAndValidateCharmURL(chParams.Charm)
+	ch, err := resolveAndValidateCharmURL(chParams.Charm, h.defaultCharmSchema)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -626,7 +628,7 @@ func (h *bundleHandler) addCharm(change *bundlechanges.AddCharmChange) error {
 			Arch: &change.Params.Architecture,
 		}
 	}
-	platform, err := utils.DeducePlatform(cons, series, h.modelConstraints)
+	platform, err := utils.DeducePlatform(cons, chSeries, h.modelConstraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -650,7 +652,7 @@ func (h *bundleHandler) addCharm(change *bundlechanges.AddCharmChange) error {
 		return errors.Trace(err)
 	}
 
-	url, resolvedOrigin, _, err := h.bundleResolver.ResolveCharm(ch, origin)
+	url, resolvedOrigin, _, err := h.bundleResolver.ResolveCharm(ch, origin, false) // no --switch possible.
 	if err != nil {
 		return errors.Annotatef(err, "cannot resolve %q", ch.Name)
 	}
@@ -705,7 +707,7 @@ func (h *bundleHandler) addApplication(change *bundlechanges.AddApplicationChang
 	}
 
 	p := change.Params
-	curl, err := resolveCharmURL(resolve(p.Charm, h.results))
+	curl, err := resolveCharmURL(resolve(p.Charm, h.results), h.defaultCharmSchema)
 	if err != nil {
 		return errors.Trace(err)
 	} else if curl == nil {
@@ -744,7 +746,6 @@ func (h *bundleHandler) addApplication(change *bundlechanges.AddApplicationChang
 	macaroon := h.macaroons[*curl]
 
 	h.results[change.Id()] = p.Application
-	ch := chID.URL.String()
 
 	// If this application requires trust and the operator consented to
 	// granting it, set the "trust" application option to true. This is
@@ -766,46 +767,22 @@ func (h *bundleHandler) addApplication(change *bundlechanges.AddApplicationChang
 		}
 		configYAML = string(config)
 	}
-	storageConstraints := h.bundleStorage[p.Application]
-	if len(p.Storage) > 0 {
-		if storageConstraints == nil {
-			storageConstraints = make(map[string]storage.Constraints)
-		}
-		for k, v := range p.Storage {
-			if _, ok := storageConstraints[k]; ok {
-				// storage constraints overridden
-				// on the command line.
-				continue
-			}
-			cons, err := storage.ParseConstraints(v)
-			if err != nil {
-				return errors.Annotate(err, "invalid storage constraints")
-			}
-			storageConstraints[k] = cons
-		}
-	}
-	deviceConstraints := h.bundleDevices[p.Application]
-	if len(p.Devices) > 0 {
-		if deviceConstraints == nil {
-			deviceConstraints = make(map[string]devices.Constraints)
-		}
-		for k, v := range p.Devices {
-			if _, ok := deviceConstraints[k]; ok {
-				// Device constraints overridden
-				// on the command line.
-				continue
-			}
-			cons, err := devices.ParseConstraints(v)
-			if err != nil {
-				return errors.Annotate(err, "invalid device constraints")
-			}
-			deviceConstraints[k] = cons
-		}
-	}
-	charmInfo, err := h.deployAPI.CharmInfo(ch)
+
+	storageConstraints, err := h.storageConstraints(p.Application, p.Storage)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	deviceConstraints, err := h.deviceConstraints(p.Application, p.Devices)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	charmInfo, err := h.deployAPI.CharmInfo(chID.URL.String())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	resources := h.makeResourceMap(charmInfo.Meta.Resources, p.Resources, p.LocalResources)
 
 	if err := lxdprofile.ValidateLXDProfile(lxdCharmInfoProfiler{
@@ -831,43 +808,8 @@ func (h *bundleHandler) addApplication(change *bundlechanges.AddApplicationChang
 	}
 
 	// Figure out what series we need to deploy with.
-	supportedSeries, err := corecharm.ComputedSeries(charmInfo.Charm())
+	selectedSeries, err := h.selectedSeries(charmInfo.Charm(), chID, curl, p.Series)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(supportedSeries) == 0 && chID.URL.Series != "" {
-		supportedSeries = []string{chID.URL.Series}
-	}
-
-	charmSeries := chID.URL.Series
-	// If a format v1 charm has a url, but is a kubernetes charm then we need to
-	// add this to the list of supported series.
-	if corecharm.IsKubernetes(charmInfo.Charm()) {
-		switch corecharm.Format(charmInfo.Charm()) {
-		case corecharm.FormatV1:
-			charmSeries = series.Kubernetes.String()
-		case corecharm.FormatV2:
-			if p.Series == series.Kubernetes.String() {
-				p.Series = charmSeries
-			}
-		}
-	}
-	workloadSeries, err := supportedJujuSeries(h.clock.Now(), p.Series, h.modelConfig.ImageStream())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	selector := seriesSelector{
-		seriesFlag:          p.Series,
-		charmURLSeries:      charmSeries,
-		supportedSeries:     supportedSeries,
-		supportedJujuSeries: workloadSeries,
-		conf:                h.modelConfig,
-		force:               h.force,
-		fromBundle:          true,
-	}
-	series, err := selector.charmSeries()
-	if err = charmValidationError(curl.Name, errors.Trace(err)); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -888,7 +830,7 @@ func (h *bundleHandler) addApplication(change *bundlechanges.AddApplicationChang
 		if origin.Track != nil {
 			track = *origin.Track
 		}
-		platform, err := utils.DeducePlatform(cons, series, h.modelConstraints)
+		platform, err := utils.DeducePlatform(cons, selectedSeries, h.modelConstraints)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -906,7 +848,7 @@ func (h *bundleHandler) addApplication(change *bundlechanges.AddApplicationChang
 		CharmOrigin:      origin,
 		Cons:             cons,
 		ApplicationName:  p.Application,
-		Series:           series,
+		Series:           selectedSeries,
 		NumUnits:         numUnits,
 		Placement:        placement,
 		ConfigYAML:       configYAML,
@@ -931,6 +873,77 @@ func (h *bundleHandler) writeAddedResources(resNames2IDs map[string]string) {
 	for _, name := range names.SortedValues() {
 		h.ctx.Infof("  added resource %s", name)
 	}
+}
+
+func (h *bundleHandler) storageConstraints(application string, storageMap map[string]string) (map[string]storage.Constraints, error) {
+	storageConstraints := h.bundleStorage[application]
+	if len(storageMap) > 0 {
+		if storageConstraints == nil {
+			storageConstraints = make(map[string]storage.Constraints)
+		}
+		for k, v := range storageMap {
+			if _, ok := storageConstraints[k]; ok {
+				// storage constraints overridden
+				// on the command line.
+				continue
+			}
+			cons, err := storage.ParseConstraints(v)
+			if err != nil {
+				return nil, errors.Annotate(err, "invalid storage constraints")
+			}
+			storageConstraints[k] = cons
+		}
+	}
+	return storageConstraints, nil
+}
+
+func (h *bundleHandler) deviceConstraints(application string, deviceMap map[string]string) (map[string]devices.Constraints, error) {
+	deviceConstraints := h.bundleDevices[application]
+	if len(deviceMap) > 0 {
+		if deviceConstraints == nil {
+			deviceConstraints = make(map[string]devices.Constraints)
+		}
+		for k, v := range deviceMap {
+			if _, ok := deviceConstraints[k]; ok {
+				// Device constraints overridden
+				// on the command line.
+				continue
+			}
+			cons, err := devices.ParseConstraints(v)
+			if err != nil {
+				return nil, errors.Annotate(err, "invalid device constraints")
+			}
+			deviceConstraints[k] = cons
+		}
+	}
+	return deviceConstraints, nil
+}
+
+func (h *bundleHandler) selectedSeries(ch charm.CharmMeta, chID application.CharmID, curl *charm.URL, series string) (string, error) {
+	supportedSeries, err := corecharm.ComputedSeries(ch)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if len(supportedSeries) == 0 && chID.URL.Series != "" {
+		supportedSeries = []string{chID.URL.Series}
+	}
+
+	workloadSeries, err := supportedJujuSeries(h.clock.Now(), series, h.modelConfig.ImageStream())
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	selector := seriesSelector{
+		seriesFlag:          series,
+		charmURLSeries:      chID.URL.Series,
+		supportedSeries:     supportedSeries,
+		supportedJujuSeries: workloadSeries,
+		conf:                h.modelConfig,
+		force:               h.force,
+		fromBundle:          true,
+	}
+	selectedSeries, err := selector.charmSeries()
+	return selectedSeries, charmValidationError(curl.Name, errors.Trace(err))
 }
 
 // scaleApplication updates the number of units for an application.
@@ -1137,7 +1150,7 @@ func (h *bundleHandler) upgradeCharm(change *bundlechanges.UpgradeCharmChange) e
 
 	p := change.Params
 	resolvedCharm := resolve(p.Charm, h.results)
-	curl, err := resolveCharmURL(resolvedCharm)
+	curl, err := resolveCharmURL(resolvedCharm, h.defaultCharmSchema)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1173,7 +1186,7 @@ func (h *bundleHandler) upgradeCharm(change *bundlechanges.UpgradeCharmChange) e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	filtered, err := utils.GetUpgradeResources(resourceLister, p.Application, resources, meta)
+	filtered, err := utils.GetUpgradeResources(curl, resourceLister, p.Application, resources, meta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1590,10 +1603,7 @@ func (b bundleArchConstraint) Arch() (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if !cons.HasArch() {
-		return "", errors.NotFoundf("arch")
-	}
-	return *cons.Arch, nil
+	return arch.ConstraintArch(cons, nil), nil
 }
 
 func addCharmConstraintsParser(s string) bundlechanges.ArchConstraint {

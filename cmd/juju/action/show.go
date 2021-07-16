@@ -20,8 +20,6 @@ type showCommand struct {
 
 	appName    string
 	actionName string
-
-	out cmd.Output
 }
 
 var showActionDoc = `
@@ -99,6 +97,7 @@ func (c *showCommand) Run(ctx *cmd.Context) error {
 			args[argName] = actionArg{
 				Type:        infoMap["type"],
 				Description: infoMap["description"],
+				Default:     infoMap["default"],
 			}
 		}
 	}
@@ -115,4 +114,5 @@ type actionArg struct {
 	// Use a struct so we can control the order of the printed values.
 	Type        interface{} `yaml:"type"`
 	Description interface{} `yaml:"description"`
+	Default     interface{} `yaml:"default,omitempty"`
 }

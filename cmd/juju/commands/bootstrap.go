@@ -680,15 +680,6 @@ to create a new model to deploy %sworkloads.
 		return errors.Trace(err)
 	}
 
-	cloudCallCtx := envcontext.NewCloudCallContext()
-	// At this stage, the credential we intend to use is not yet stored
-	// server-side. So, if the credential is not accepted by the provider,
-	// we cannot mark it as invalid, just log it as an informative message.
-	cloudCallCtx.InvalidateCredentialFunc = func(reason string) error {
-		ctx.Infof("Cloud credential %q is not accepted by cloud provider: %v", credentials.name, reason)
-		return nil
-	}
-
 	region, err := common.ChooseCloudRegion(cloud, regionName)
 	if err != nil {
 		return errors.Trace(err)
@@ -816,7 +807,9 @@ to create a new model to deploy %sworkloads.
 
 	// Validate the storage provider config.
 	registry := stateenvirons.NewStorageProviderRegistry(environ)
-	m := poolmanager.MemSettings{make(map[string]map[string]interface{})}
+	m := poolmanager.MemSettings{
+		Settings: make(map[string]map[string]interface{}),
+	}
 	pm := poolmanager.New(m, registry)
 	for poolName, cfg := range bootstrapCfg.storagePools {
 		poolType, _ := cfg[poolmanager.Type].(string)
@@ -879,6 +872,15 @@ to create a new model to deploy %sworkloads.
 		"Creating Juju controller %q on %s",
 		c.controllerName, cloudRegion,
 	)
+
+	cloudCallCtx := envcontext.NewCloudCallContext(context.Background())
+	// At this stage, the credential we intend to use is not yet stored
+	// server-side. So, if the credential is not accepted by the provider,
+	// we cannot mark it as invalid, just log it as an informative message.
+	cloudCallCtx.InvalidateCredentialFunc = func(reason string) error {
+		ctx.Infof("Cloud credential %q is not accepted by cloud provider: %v", credentials.name, reason)
+		return nil
+	}
 
 	// If we error out for any reason, clean up the environment.
 	defer func() {

@@ -4,6 +4,7 @@
 package state
 
 import (
+	stdcontext "context"
 	"fmt"
 	"sort"
 	"time"
@@ -2802,7 +2803,7 @@ func (s *upgradesSuite) TestUpdateKubernetesStorageConfig(c *gc.C) {
 	err := s.state.UpdateCloudCredential(tag, cloud.NewEmptyCredential())
 	c.Assert(err, jc.ErrorIsNil)
 
-	s.PatchValue(&NewBroker, func(args environs.OpenParams) (caas.Broker, error) {
+	s.PatchValue(&NewBroker, func(_ stdcontext.Context, args environs.OpenParams) (caas.Broker, error) {
 		return &fakeBroker{}, nil
 	})
 
@@ -2836,7 +2837,7 @@ func (s *upgradesSuite) TestUpdateKubernetesStorageConfigWithDyingModel(c *gc.C)
 	err := s.state.UpdateCloudCredential(tag, cloud.NewEmptyCredential())
 	c.Assert(err, jc.ErrorIsNil)
 
-	s.PatchValue(&NewBroker, func(args environs.OpenParams) (caas.Broker, error) {
+	s.PatchValue(&NewBroker, func(_ stdcontext.Context, args environs.OpenParams) (caas.Broker, error) {
 		return &fakeBroker{}, nil
 	})
 
@@ -5207,6 +5208,121 @@ func (s *upgradesSuite) TestUpdateLegacyKubernetesCloudCredentialsOAuth2Cert(c *
 	s.assertUpgradedData(c, f,
 		upgradedData(cloudColl, expectedClouds),
 		upgradedData(cloudCredColl, expectedCloudCreds),
+	)
+}
+
+func (s *upgradesSuite) TestUpdateDHCPAddressConfigs(c *gc.C) {
+	model1 := s.makeModel(c, "model-1", coretesting.Attrs{})
+	defer func() { _ = model1.Close() }()
+
+	col, closer := s.state.db().GetRawCollection(ipAddressesC)
+	defer closer()
+
+	docs := []interface{}{
+		bson.M{"_id": model1.modelUUID() + ":m#0#d#eth0#ip#10.10.10.10", "config-method": "dynamic"},
+		bson.M{"_id": model1.modelUUID() + ":m#1#d#eth1#ip#20.20.20.20", "config-method": network.ConfigStatic},
+	}
+	err := col.Insert(docs...)
+	c.Assert(err, jc.ErrorIsNil)
+
+	// The first of the docs has an upgraded config method.
+	s.assertUpgradedData(c, UpdateDHCPAddressConfigs, upgradedData(col, []bson.M{
+		{"_id": model1.modelUUID() + ":m#0#d#eth0#ip#10.10.10.10", "config-method": string(network.ConfigDHCP)},
+		{"_id": model1.modelUUID() + ":m#1#d#eth1#ip#20.20.20.20", "config-method": string(network.ConfigStatic)},
+	}))
+}
+
+func (s *upgradesSuite) TestAddSpawnedTaskCountToOperations(c *gc.C) {
+	operationsCol, closerOne := s.state.db().GetRawCollection(operationsC)
+	defer closerOne()
+
+	actionsCol, closerTwo := s.state.db().GetRawCollection(actionsC)
+	defer closerTwo()
+
+	model1 := s.makeModel(c, "model-1", coretesting.Attrs{})
+	model2 := s.makeModel(c, "model-2", coretesting.Attrs{})
+	defer func() {
+		_ = model1.Close()
+		_ = model2.Close()
+	}()
+
+	uuid1 := model1.ModelUUID()
+	uuid2 := model2.ModelUUID()
+
+	err := operationsCol.Insert(
+		// ---- model 1 ----
+		bson.M{
+			"_id":        ensureModelUUID(uuid1, "2"),
+			"model-uuid": uuid1,
+		},
+		bson.M{
+			"_id":        ensureModelUUID(uuid1, "10"),
+			"model-uuid": uuid1,
+		},
+		// ---- model 2 ----
+		bson.M{
+			"_id":        ensureModelUUID(uuid2, "2"),
+			"model-uuid": uuid2,
+		},
+	)
+	c.Assert(err, jc.ErrorIsNil)
+
+	err = actionsCol.Insert(
+		bson.M{
+			"_id":        ensureModelUUID(uuid1, "3"),
+			"model-uuid": uuid1,
+			"operation":  "2",
+		},
+		bson.M{
+			"_id":        ensureModelUUID(uuid1, "11"),
+			"model-uuid": uuid1,
+			"operation":  "10",
+		},
+		bson.M{
+			"_id":        ensureModelUUID(uuid1, "12"),
+			"model-uuid": uuid1,
+			"operation":  "10",
+		},
+		bson.M{
+			"_id":        ensureModelUUID(uuid2, "3"),
+			"operation":  "2",
+			"model-uuid": uuid2,
+		},
+		bson.M{
+			"_id":        ensureModelUUID(uuid2, "4"),
+			"operation":  "2",
+			"model-uuid": uuid2,
+		},
+		bson.M{
+			"_id":        ensureModelUUID(uuid2, "5"),
+			"operation":  "2",
+			"model-uuid": uuid2,
+		},
+	)
+	c.Assert(err, jc.ErrorIsNil)
+
+	expectedOperations := bsonMById{
+		{
+			"_id":                ensureModelUUID(uuid1, "2"),
+			"model-uuid":         uuid1,
+			"spawned-task-count": 1,
+		},
+		{
+			"_id":                ensureModelUUID(uuid1, "10"),
+			"model-uuid":         uuid1,
+			"spawned-task-count": 2,
+		},
+		{
+			"_id":                ensureModelUUID(uuid2, "2"),
+			"model-uuid":         uuid2,
+			"spawned-task-count": 3,
+		},
+	}
+
+	sort.Sort(expectedOperations)
+
+	s.assertUpgradedData(c, AddSpawnedTaskCountToOperations,
+		upgradedData(operationsCol, expectedOperations),
 	)
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/juju/collections/set"
 	"github.com/juju/description/v3"
 	"github.com/juju/errors"
+	"github.com/juju/juju/core/arch"
 	"github.com/juju/loggo"
 	"github.com/juju/mgo/v2/bson"
 	"github.com/juju/mgo/v2/txn"
@@ -1511,7 +1512,7 @@ func getApplicationArchConstraint(a description.Application) string {
 	if arch := cons.Architecture(); arch != "" {
 		return arch
 	}
-	return ""
+	return arch.DefaultArchitecture
 }
 
 func (i *importer) relationCount(application string) int {
@@ -2043,6 +2044,12 @@ func (i *importer) addIPAddress(addr description.IPAddress) error {
 
 	modelUUID := i.st.ModelUUID()
 
+	// Compatibility shim for deployments prior to 2.9.1.
+	configType := addr.ConfigMethod()
+	if configType == "dynamic" {
+		configType = string(network.ConfigDHCP)
+	}
+
 	newDoc := &ipAddressDoc{
 		DocID:             ipAddressDocID,
 		ModelUUID:         modelUUID,
@@ -2050,7 +2057,7 @@ func (i *importer) addIPAddress(addr description.IPAddress) error {
 		DeviceName:        addr.DeviceName(),
 		MachineID:         addr.MachineID(),
 		SubnetCIDR:        subnetCIDR,
-		ConfigMethod:      network.AddressConfigMethod(addr.ConfigMethod()),
+		ConfigMethod:      network.AddressConfigType(configType),
 		Value:             addressValue,
 		DNSServers:        addr.DNSServers(),
 		DNSSearchDomains:  addr.DNSSearchDomains(),
@@ -2188,6 +2195,8 @@ func (i *importer) addAction(action description.Action) error {
 	return nil
 }
 
+// operations takes the imported operations data and writes it to
+// the new model.
 func (i *importer) operations() error {
 	i.logger.Debugf("importing operations")
 	for _, op := range i.model.Operations() {
@@ -2207,11 +2216,13 @@ func (i *importer) addOperation(op description.Operation) error {
 		DocId:             i.st.docID(op.Id()),
 		ModelUUID:         modelUUID,
 		Summary:           op.Summary(),
+		Fail:              op.Fail(),
 		Enqueued:          op.Enqueued(),
 		Started:           op.Started(),
 		Completed:         op.Completed(),
 		Status:            ActionStatus(op.Status()),
 		CompleteTaskCount: op.CompleteTaskCount(),
+		SpawnedTaskCount:  i.countActionTasksForOperation(op),
 	}
 	ops := []txn.Op{{
 		C:      operationsC,
@@ -2223,6 +2234,20 @@ func (i *importer) addOperation(op description.Operation) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (i *importer) countActionTasksForOperation(op description.Operation) int {
+	if op.SpawnedTaskCount() > 0 {
+		return op.SpawnedTaskCount()
+	}
+	opID := op.Id()
+	var count int
+	for _, action := range i.model.Actions() {
+		if action.Operation() == opID {
+			count += 1
+		}
+	}
+	return count
 }
 
 func (i *importer) importStatusHistory(globalKey string, history []description.Status) error {

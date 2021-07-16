@@ -783,9 +783,21 @@ func (c *DeployCommand) Run(ctx *cmd.Context) error {
 		return c.NewDownloadClient()
 	}
 
-	charmAdapter := c.NewResolver(apicharms.NewClient(apiRoot), csRepoFn, downloadClientFn)
+	charmAPIClient := apicharms.NewClient(apiRoot)
+	charmAdapter := c.NewResolver(charmAPIClient, csRepoFn, downloadClientFn)
 
-	factory, cfg := c.getDeployerFactory()
+	// Check whether the controller includes charmhub support. If not,
+	// assume that the default schema for charms URL without one is
+	// charm.Charmstore. Otherwise use charm.Charmhub.
+	//
+	// This ensures that we don't break backwards compatibility when using
+	// a 2.9 client and run "juju deploy X" against a 2.8 controller.
+	defaultCharmSchema := charm.CharmHub
+	if charmAPIClient.BestAPIVersion() < 3 {
+		defaultCharmSchema = charm.CharmStore
+	}
+
+	factory, cfg := c.getDeployerFactory(defaultCharmSchema)
 	deploy, err := factory.GetDeployer(cfg, apiRoot, charmAdapter)
 	if err != nil {
 		return errors.Trace(err)
@@ -829,38 +841,40 @@ func (c *DeployCommand) getMeteringAPIURL(controllerAPIRoot api.Connection) (str
 	return controllerCfg.MeteringURL(), nil
 }
 
-func (c *DeployCommand) getDeployerFactory() (deployer.DeployerFactory, deployer.DeployerConfig) {
+func (c *DeployCommand) getDeployerFactory(defaultCharmSchema charm.Schema) (deployer.DeployerFactory, deployer.DeployerConfig) {
 	dep := deployer.DeployerDependencies{
 		Model:                c,
 		FileSystem:           c.ModelCommandBase.Filesystem(),
+		CharmReader:          defaultCharmReader{},
 		NewConsumeDetailsAPI: c.NewConsumeDetailsAPI, // only used here
 		Steps:                c.Steps,
 	}
 	cfg := deployer.DeployerConfig{
-		ApplicationName:   c.ApplicationName,
-		AttachStorage:     c.AttachStorage,
-		Bindings:          c.Bindings,
-		BundleDevices:     c.BundleDevices,
-		BundleMachines:    c.BundleMachines,
-		BundleOverlayFile: c.BundleOverlayFile,
-		BundleStorage:     c.BundleStorage,
-		Channel:           c.Channel,
-		CharmOrBundle:     c.CharmOrBundle,
-		ConfigOptions:     c.ConfigOptions,
-		Constraints:       c.Constraints,
-		ModelConstraints:  c.ModelConstraints,
-		Devices:           c.Devices,
-		DryRun:            c.DryRun,
-		FlagSet:           c.flagSet,
-		Force:             c.Force,
-		NumUnits:          c.NumUnits,
-		PlacementSpec:     c.PlacementSpec,
-		Placement:         c.Placement,
-		Resources:         c.Resources,
-		Series:            c.Series,
-		Storage:           c.Storage,
-		Trust:             c.Trust,
-		UseExisting:       c.UseExisting,
+		ApplicationName:    c.ApplicationName,
+		AttachStorage:      c.AttachStorage,
+		Bindings:           c.Bindings,
+		BundleDevices:      c.BundleDevices,
+		BundleMachines:     c.BundleMachines,
+		BundleOverlayFile:  c.BundleOverlayFile,
+		BundleStorage:      c.BundleStorage,
+		Channel:            c.Channel,
+		CharmOrBundle:      c.CharmOrBundle,
+		DefaultCharmSchema: defaultCharmSchema,
+		ConfigOptions:      c.ConfigOptions,
+		Constraints:        c.Constraints,
+		ModelConstraints:   c.ModelConstraints,
+		Devices:            c.Devices,
+		DryRun:             c.DryRun,
+		FlagSet:            c.flagSet,
+		Force:              c.Force,
+		NumUnits:           c.NumUnits,
+		PlacementSpec:      c.PlacementSpec,
+		Placement:          c.Placement,
+		Resources:          c.Resources,
+		Series:             c.Series,
+		Storage:            c.Storage,
+		Trust:              c.Trust,
+		UseExisting:        c.UseExisting,
 	}
 	return c.NewDeployerFactory(dep), cfg
 }
@@ -881,4 +895,11 @@ func (c *DeployCommand) getCharmHubURL(apiRoot base.APICallCloser) (string, erro
 
 	charmHubURL, _ := config.CharmHubURL()
 	return charmHubURL, nil
+}
+
+type defaultCharmReader struct{}
+
+// ReadCharm attempts to read a charm from a path on the filesystem.
+func (defaultCharmReader) ReadCharm(path string) (charm.Charm, error) {
+	return charm.ReadCharm(path)
 }

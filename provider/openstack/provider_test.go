@@ -8,14 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/go-goose/goose/v4/identity"
+	"github.com/go-goose/goose/v4/neutron"
+	"github.com/go-goose/goose/v4/nova"
 	"github.com/golang/mock/gomock"
 	gitjujutesting "github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	"github.com/juju/utils/v2"
 	gc "gopkg.in/check.v1"
-	"gopkg.in/goose.v2/identity"
-	"gopkg.in/goose.v2/neutron"
-	"gopkg.in/goose.v2/nova"
 	"gopkg.in/yaml.v2"
 
 	"github.com/juju/juju/cloud"
@@ -474,7 +474,7 @@ func (localTests) TestPingInvalidHost(c *gc.C) {
 
 	p, err := environs.Provider("openstack")
 	c.Assert(err, jc.ErrorIsNil)
-	callCtx := context.NewCloudCallContext()
+	callCtx := context.NewEmptyCloudCallContext()
 	for _, t := range tests {
 		err = p.Ping(callCtx, t)
 		if err == nil {
@@ -492,7 +492,7 @@ func (localTests) TestPingNoEndpoint(c *gc.C) {
 	defer server.Close()
 	p, err := environs.Provider("openstack")
 	c.Assert(err, jc.ErrorIsNil)
-	err = p.Ping(context.NewCloudCallContext(), server.URL)
+	err = p.Ping(context.NewEmptyCloudCallContext(), server.URL)
 	c.Assert(err, gc.ErrorMatches, "No Openstack server running at "+server.URL)
 }
 
@@ -503,7 +503,7 @@ func (localTests) TestPingInvalidResponse(c *gc.C) {
 	defer server.Close()
 	p, err := environs.Provider("openstack")
 	c.Assert(err, jc.ErrorIsNil)
-	err = p.Ping(context.NewCloudCallContext(), server.URL)
+	err = p.Ping(context.NewEmptyCloudCallContext(), server.URL)
 	c.Assert(err, gc.ErrorMatches, "No Openstack server running at "+server.URL)
 }
 
@@ -522,7 +522,7 @@ func (localTests) TestPingOK(c *gc.C) {
 func pingOk(c *gc.C, server *httptest.Server) {
 	p, err := environs.Provider("openstack")
 	c.Assert(err, jc.ErrorIsNil)
-	err = p.Ping(context.NewCloudCallContext(), server.URL)
+	err = p.Ping(context.NewEmptyCloudCallContext(), server.URL)
 	c.Assert(err, jc.ErrorIsNil)
 }
 

@@ -5,6 +5,7 @@ package commands
 
 import (
 	"bytes"
+	stdcontext "context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -1250,7 +1251,8 @@ func createImageMetadata(c *gc.C) (string, []*imagemetadata.ImageMetadata) {
 	sourceDir := c.MkDir()
 	sourceStor, err := filestorage.NewFileStorageWriter(sourceDir)
 	c.Assert(err, jc.ErrorIsNil)
-	err = imagemetadata.MergeAndWriteMetadata("xenial", im, cloudSpec, sourceStor)
+	ss := simplestreams.NewSimpleStreams(sstesting.TestDataSourceFactory())
+	err = imagemetadata.MergeAndWriteMetadata(ss, "xenial", im, cloudSpec, sourceStor)
 	c.Assert(err, jc.ErrorIsNil)
 	return sourceDir, im
 }
@@ -1342,12 +1344,12 @@ func (s *BootstrapSuite) TestAutoSyncLocalSource(c *gc.C) {
 	cfg, err := provider.PrepareConfig(*params)
 	c.Assert(err, jc.ErrorIsNil)
 
-	env, err := environs.New(environs.OpenParams{
+	env, err := environs.New(stdcontext.TODO(), environs.OpenParams{
 		Cloud:  params.Cloud,
 		Config: cfg,
 	})
 	c.Assert(err, jc.ErrorIsNil)
-	err = env.PrepareForBootstrap(envtesting.BootstrapContext(c), "controller-1")
+	err = env.PrepareForBootstrap(envtesting.BootstrapContext(stdcontext.TODO(), c), "controller-1")
 	c.Assert(err, jc.ErrorIsNil)
 
 	// Now check the available tools which are the 1.2.0 envtools.
@@ -1989,6 +1991,7 @@ azure
 azure-china                                   
 cloudsigma                                    
 ecs                                           
+equinix                                       
 google                                        
 oracle                                        
 rackspace                                     \n?(localhost\s+)?(microk8s\s+)?
@@ -2052,6 +2055,7 @@ azure
 azure-china                                   
 cloudsigma                                    
 ecs                                           
+equinix                                       
 google                                        
 oracle                                        
 rackspace                                     \n?(localhost\s+)?(microk8s\s+)?
@@ -2317,7 +2321,8 @@ clouds:
 
 // checkTools check if the environment contains the passed envtools.
 func checkTools(c *gc.C, env environs.Environ, expected []version.Binary) {
-	list, err := envtools.FindTools(
+	ss := simplestreams.NewSimpleStreams(sstesting.TestDataSourceFactory())
+	list, err := envtools.FindTools(ss,
 		env, jujuversion.Current.Major, jujuversion.Current.Minor, []string{"released"}, coretools.Filter{})
 	c.Check(err, jc.ErrorIsNil)
 	c.Logf("found: " + list.String())
@@ -2424,7 +2429,7 @@ func (noCredentialsProvider) DetectRegions() ([]cloud.Region, error) {
 	return []cloud.Region{{Name: "region"}}, nil
 }
 
-func (noCredentialsProvider) DetectCredentials() (*cloud.CloudCredential, error) {
+func (noCredentialsProvider) DetectCredentials(cloudName string) (*cloud.CloudCredential, error) {
 	return nil, errors.NotFoundf("credentials")
 }
 
@@ -2440,7 +2445,7 @@ func (manyCredentialsProvider) DetectRegions() ([]cloud.Region, error) {
 	return []cloud.Region{{Name: "region"}}, nil
 }
 
-func (manyCredentialsProvider) DetectCredentials() (*cloud.CloudCredential, error) {
+func (manyCredentialsProvider) DetectCredentials(cloudName string) (*cloud.CloudCredential, error) {
 	return &cloud.CloudCredential{
 		AuthCredentials: map[string]cloud.Credential{
 			"one": cloud.NewCredential("one", nil),
@@ -2466,7 +2471,7 @@ func (f fileCredentialProvider) DetectRegions() ([]cloud.Region, error) {
 	return []cloud.Region{{Name: "region"}}, nil
 }
 
-func (f fileCredentialProvider) DetectCredentials() (*cloud.CloudCredential, error) {
+func (f fileCredentialProvider) DetectCredentials(cloudName string) (*cloud.CloudCredential, error) {
 	credential := cloud.NewCredential(cloud.JSONFileAuthType,
 		map[string]string{"file": f.testFileName})
 	cc := &cloud.CloudCredential{AuthCredentials: map[string]cloud.Credential{

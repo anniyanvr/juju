@@ -23,14 +23,19 @@ func (environProviderCredentials) CredentialSchemas() map[cloud.AuthType]cloud.C
 	return map[cloud.AuthType]cloud.CredentialSchema{
 		cloud.UserPassAuthType: {
 			{
-				credAttrUser, cloud.CredentialAttr{Description: "The username to authenticate with."},
+				Name: credAttrUser,
+				CredentialAttr: cloud.CredentialAttr{
+					Description: "The username to authenticate with.",
+				},
 			}, {
-				credAttrPassword, cloud.CredentialAttr{
+				Name: credAttrPassword,
+				CredentialAttr: cloud.CredentialAttr{
 					Description: "The password to authenticate with.",
 					Hidden:      true,
 				},
 			}, {
-				credAttrVMFolder, cloud.CredentialAttr{
+				Name: credAttrVMFolder,
+				CredentialAttr: cloud.CredentialAttr{
 					Description: "The folder to add VMs from the model.",
 					Optional:    true,
 				},
@@ -40,7 +45,7 @@ func (environProviderCredentials) CredentialSchemas() map[cloud.AuthType]cloud.C
 }
 
 // DetectCredentials is part of the environs.ProviderCredentials interface.
-func (environProviderCredentials) DetectCredentials() (*cloud.CloudCredential, error) {
+func (environProviderCredentials) DetectCredentials(cloudName string) (*cloud.CloudCredential, error) {
 	return nil, errors.NotFoundf("credentials")
 }
 

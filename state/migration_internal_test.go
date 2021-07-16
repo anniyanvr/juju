@@ -250,6 +250,9 @@ func (s *MigrationSuite) TestModelDocFields(c *gc.C) {
 		// ForceDestroyed is only relevant for models that are being
 		// removed.
 		"ForceDestroyed",
+		// DestroyTimeout is only relevant for models that are being
+		// removed.
+		"DestroyTimeout",
 		// ControllerUUID is recreated when the new model is created
 		// in the new controller (yay name changes).
 		"ControllerUUID",
@@ -743,6 +746,24 @@ func (s *MigrationSuite) TestActionDocFields(c *gc.C) {
 		"ExecutionGroup",
 	)
 	s.AssertExportedFields(c, actionDoc{}, migrated.Union(ignored))
+}
+
+func (s *MigrationSuite) TestOperationDocFields(c *gc.C) {
+	ignored := set.NewStrings(
+		"ModelUUID",
+		"CompleteTaskCount",
+	)
+	migrated := set.NewStrings(
+		"DocId",
+		"Summary",
+		"Enqueued",
+		"Started",
+		"Completed",
+		"Status",
+		"Fail",
+		"SpawnedTaskCount",
+	)
+	s.AssertExportedFields(c, operationDoc{}, migrated.Union(ignored))
 }
 
 func (s *MigrationSuite) TestVolumeDocFields(c *gc.C) {

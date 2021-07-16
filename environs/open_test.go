@@ -4,6 +4,8 @@
 package environs_test
 
 import (
+	stdcontext "context"
+
 	"github.com/juju/errors"
 	gitjujutesting "github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
@@ -51,7 +53,7 @@ func (s *OpenSuite) TestNewDummyEnviron(c *gc.C) {
 	// matches *Settings.Map()
 	cfg, err := config.New(config.NoDefaults, dummySampleConfig())
 	c.Assert(err, jc.ErrorIsNil)
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	cache := jujuclient.NewMemStore()
 	controllerCfg := testing.FakeControllerConfig()
 	bootstrapEnviron, err := bootstrap.PrepareController(false, ctx, cache, bootstrap.PrepareParams{
@@ -69,7 +71,7 @@ func (s *OpenSuite) TestNewDummyEnviron(c *gc.C) {
 	stor, err := filestorage.NewFileStorageWriter(storageDir)
 	c.Assert(err, jc.ErrorIsNil)
 	envtesting.UploadFakeTools(c, stor, cfg.AgentStream(), cfg.AgentStream())
-	err = bootstrap.Bootstrap(ctx, env, context.NewCloudCallContext(), bootstrap.BootstrapParams{
+	err = bootstrap.Bootstrap(ctx, env, context.NewEmptyCloudCallContext(), bootstrap.BootstrapParams{
 		ControllerConfig:         controllerCfg,
 		AdminSecret:              "admin-secret",
 		CAPrivateKey:             testing.CAKey,
@@ -85,7 +87,7 @@ func (s *OpenSuite) TestNewDummyEnviron(c *gc.C) {
 
 func (s *OpenSuite) TestUpdateEnvInfo(c *gc.C) {
 	store := jujuclient.NewMemStore()
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	uuid := utils.MustNewUUID().String()
 	cfg, err := config.New(config.UseDefaults, map[string]interface{}{
 		"type": "dummy",
@@ -116,7 +118,7 @@ func (s *OpenSuite) TestUpdateEnvInfo(c *gc.C) {
 }
 
 func (*OpenSuite) TestNewUnknownEnviron(c *gc.C) {
-	env, err := environs.New(environs.OpenParams{
+	env, err := environs.New(stdcontext.TODO(), environs.OpenParams{
 		Cloud: environscloudspec.CloudSpec{
 			Type: "wondercloud",
 		},
@@ -133,12 +135,12 @@ func (*OpenSuite) TestNew(c *gc.C) {
 		},
 	))
 	c.Assert(err, jc.ErrorIsNil)
-	e, err := environs.New(environs.OpenParams{
+	e, err := environs.New(stdcontext.TODO(), environs.OpenParams{
 		Cloud:  dummy.SampleCloudSpec(),
 		Config: cfg,
 	})
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = e.ControllerInstances(context.NewCloudCallContext(), "uuid")
+	_, err = e.ControllerInstances(context.NewEmptyCloudCallContext(), "uuid")
 	c.Assert(err, gc.ErrorMatches, "model is not prepared")
 }
 
@@ -154,7 +156,7 @@ func (*OpenSuite) TestDestroy(c *gc.C) {
 	// Prepare the environment and sanity-check that
 	// the config storage info has been made.
 	controllerCfg := testing.FakeControllerConfig()
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	bootstrapEnviron, err := bootstrap.PrepareController(false, ctx, store, bootstrap.PrepareParams{
 		ControllerConfig: controllerCfg,
 		ControllerName:   "controller-name",
@@ -167,7 +169,7 @@ func (*OpenSuite) TestDestroy(c *gc.C) {
 	_, err = store.ControllerByName("controller-name")
 	c.Assert(err, jc.ErrorIsNil)
 
-	callCtx := context.NewCloudCallContext()
+	callCtx := context.NewEmptyCloudCallContext()
 	err = environs.Destroy("controller-name", e, callCtx, store)
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -182,7 +184,7 @@ func (*OpenSuite) TestDestroy(c *gc.C) {
 func (*OpenSuite) TestDestroyNotFound(c *gc.C) {
 	var env destroyControllerEnv
 	store := jujuclient.NewMemStore()
-	err := environs.Destroy("fnord", &env, context.NewCloudCallContext(), store)
+	err := environs.Destroy("fnord", &env, context.NewEmptyCloudCallContext(), store)
 	c.Assert(err, jc.ErrorIsNil)
 	env.CheckCallNames(c) // no controller details, no call
 }

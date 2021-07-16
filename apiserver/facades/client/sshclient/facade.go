@@ -32,7 +32,8 @@ func NewFacade(ctx facade.Context) (*Facade, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return internalFacade(&backend{m.ModelTag(), st, stateenvirons.EnvironConfigGetter{Model: m}}, ctx.Auth(), context.CallContext(st))
+	return internalFacade(
+		&backend{st, stateenvirons.EnvironConfigGetter{Model: m}, m.ModelTag()}, ctx.Auth(), context.CallContext(st))
 }
 
 func internalFacade(backend Backend, auth facade.Authorizer, callCtx context.ProviderCallContext) (*Facade, error) {
@@ -55,7 +56,7 @@ func (facade *Facade) checkIsModelAdmin() error {
 }
 
 // PublicAddress reports the preferred public network address for one
-// or more entities. Machines and units are suppored.
+// or more entities. Machines and units are supported.
 func (facade *Facade) PublicAddress(args params.Entities) (params.SSHAddressResults, error) {
 	if err := facade.checkIsModelAdmin(); err != nil {
 		return params.SSHAddressResults{}, errors.Trace(err)
@@ -92,21 +93,23 @@ func (facade *Facade) AllAddresses(args params.Entities) (params.SSHAddressesRes
 
 	environ, supportsNetworking := environs.SupportsNetworking(env)
 	getter := func(m SSHMachine) ([]network.SpaceAddress, error) {
-		devicesAddresses, err := m.AllNetworkAddresses()
+		devicesAddresses, err := m.AllDeviceSpaceAddresses()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		legacyAddresses := m.Addresses()
 		devicesAddresses = append(devicesAddresses, legacyAddresses...)
+
 		// Make the list unique
-		addressMap := make(map[network.SpaceAddress]bool)
-		uniqueAddresses := []network.SpaceAddress{}
+		addressMap := make(map[string]bool)
+		var uniqueAddresses []network.SpaceAddress
 		for _, address := range devicesAddresses {
-			if !addressMap[address] {
-				addressMap[address] = true
+			if !addressMap[address.Value] {
+				addressMap[address.Value] = true
 				uniqueAddresses = append(uniqueAddresses, address)
 			}
 		}
+
 		if supportsNetworking {
 			return environ.SSHAddresses(facade.callContext, uniqueAddresses)
 		} else {

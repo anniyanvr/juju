@@ -150,6 +150,81 @@ func (s *refresherFactorySuite) TestRefreshCallsRefreshersEvenAfterExhaustedErro
 	c.Assert(charmID, gc.DeepEquals, charmID)
 }
 
+type baseRefresherSuite struct{}
+
+var _ = gc.Suite(&baseRefresherSuite{})
+
+func (s *baseRefresherSuite) TestResolveCharm(c *gc.C) {
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	ref := "meshuggah"
+	curl := charm.MustParseURL(ref)
+	newCurl := charm.MustParseURL(fmt.Sprintf("%s-1", ref))
+	origin := commoncharm.Origin{}
+
+	charmResolver := NewMockCharmResolver(ctrl)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(newCurl, origin, []string{}, nil)
+
+	refresher := baseRefresher{
+		charmRef:        "meshuggah",
+		charmURL:        charm.MustParseURL("meshuggah"),
+		charmResolver:   charmResolver,
+		resolveOriginFn: charmHubOriginResolver,
+		logger:          fakeLogger{},
+	}
+	url, origin, err := refresher.ResolveCharm()
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(url, gc.DeepEquals, charm.MustParseURL("ch:meshuggah-1"))
+	c.Assert(origin, gc.DeepEquals, commoncharm.Origin{})
+}
+
+func (s *baseRefresherSuite) TestResolveCharmWithSeriesError(c *gc.C) {
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	ref := "meshuggah"
+	curl := charm.MustParseURL(ref)
+	newCurl := charm.MustParseURL(fmt.Sprintf("%s-1", ref))
+	origin := commoncharm.Origin{}
+
+	charmResolver := NewMockCharmResolver(ctrl)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(newCurl, origin, []string{"focal"}, nil)
+
+	refresher := baseRefresher{
+		charmRef:        "meshuggah",
+		deployedSeries:  "bionic",
+		charmURL:        charm.MustParseURL("meshuggah"),
+		charmResolver:   charmResolver,
+		resolveOriginFn: charmHubOriginResolver,
+		logger:          fakeLogger{},
+	}
+	_, _, err := refresher.ResolveCharm()
+	c.Assert(err, gc.ErrorMatches, `cannot upgrade from single series "bionic" charm to a charm supporting \["focal"\]. Use --force-series to override.`)
+}
+
+func (s *baseRefresherSuite) TestResolveCharmWithNoCharmURL(c *gc.C) {
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	ref := "meshuggah"
+	curl := charm.MustParseURL(ref)
+	newCurl := charm.MustParseURL(fmt.Sprintf("%s-1", ref))
+	origin := commoncharm.Origin{}
+
+	charmResolver := NewMockCharmResolver(ctrl)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(newCurl, origin, []string{}, nil)
+
+	refresher := baseRefresher{
+		charmRef:        "meshuggah",
+		charmResolver:   charmResolver,
+		resolveOriginFn: charmHubOriginResolver,
+		logger:          fakeLogger{},
+	}
+	_, _, err := refresher.ResolveCharm()
+	c.Assert(err, gc.ErrorMatches, "unexpected charm URL")
+}
+
 type localCharmRefresherSuite struct{}
 
 var _ = gc.Suite(&localCharmRefresherSuite{})
@@ -249,7 +324,7 @@ func (s *charmStoreCharmRefresherSuite) TestRefresh(c *gc.C) {
 	charmAdder.EXPECT().AddCharm(newCurl, origin, false).Return(origin, nil)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(newCurl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(newCurl, origin, []string{}, nil)
 
 	cfg := basicRefresherConfig(curl, ref)
 
@@ -280,7 +355,7 @@ func (s *charmStoreCharmRefresherSuite) TestRefreshWithNoUpdates(c *gc.C) {
 	charmAdder := NewMockCharmAdder(ctrl)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(curl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(curl, origin, []string{}, nil)
 
 	cfg := basicRefresherConfig(curl, ref)
 
@@ -307,7 +382,7 @@ func (s *charmStoreCharmRefresherSuite) TestRefreshWithARevision(c *gc.C) {
 	charmAdder := NewMockCharmAdder(ctrl)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(curl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(curl, origin, []string{}, nil)
 
 	cfg := basicRefresherConfig(curl, ref)
 
@@ -317,6 +392,34 @@ func (s *charmStoreCharmRefresherSuite) TestRefreshWithARevision(c *gc.C) {
 
 	_, err = task.Refresh()
 	c.Assert(err, gc.ErrorMatches, `already running specified charm "meshuggah", revision 1`)
+}
+
+func (s *charmStoreCharmRefresherSuite) TestRefreshWithCharmSwitch(c *gc.C) {
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	ref := "cs:aloupi-1"
+	curl := charm.MustParseURL(ref)
+	origin := commoncharm.Origin{
+		Source:       commoncharm.OriginCharmStore,
+		Architecture: arch.DefaultArchitecture,
+	}
+
+	authorizer := NewMockMacaroonGetter(ctrl)
+	charmAdder := NewMockCharmAdder(ctrl)
+
+	charmResolver := NewMockCharmResolver(ctrl)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, true).Return(curl, origin, []string{}, nil)
+
+	cfg := basicRefresherConfig(curl, ref)
+	cfg.Switch = true
+
+	refresher := (&factory{}).maybeCharmStore(authorizer, charmAdder, charmResolver)
+	task, err := refresher(cfg)
+	c.Assert(err, jc.ErrorIsNil)
+
+	_, err = task.Refresh()
+	c.Assert(err, gc.ErrorMatches, `already running specified charm "aloupi", revision 1`)
 }
 
 type charmHubCharmRefresherSuite struct{}
@@ -339,7 +442,40 @@ func (s *charmHubCharmRefresherSuite) TestRefresh(c *gc.C) {
 	charmAdder.EXPECT().AddCharm(newCurl, origin, false).Return(origin, nil)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(newCurl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(newCurl, origin, []string{}, nil)
+
+	cfg := refresherConfigWithOrigin(curl, ref, "bionic")
+	cfg.DeployedSeries = "bionic"
+
+	refresher := (&factory{}).maybeCharmHub(charmAdder, charmResolver)
+	task, err := refresher(cfg)
+	c.Assert(err, jc.ErrorIsNil)
+
+	charmID, err := task.Refresh()
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(charmID, gc.DeepEquals, &CharmID{
+		URL:    newCurl,
+		Origin: origin.CoreCharmOrigin(),
+	})
+}
+
+func (s *charmHubCharmRefresherSuite) TestRefreshWithNoOrigin(c *gc.C) {
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	ref := "ch:meshuggah"
+	curl := charm.MustParseURL(ref)
+	newCurl := charm.MustParseURL(fmt.Sprintf("%s-1", ref))
+	origin := commoncharm.Origin{
+		Source: commoncharm.OriginCharmHub,
+		Series: "bionic",
+	}
+
+	charmAdder := NewMockCharmAdder(ctrl)
+	charmAdder.EXPECT().AddCharm(newCurl, origin, false).Return(origin, nil)
+
+	charmResolver := NewMockCharmResolver(ctrl)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(newCurl, origin, []string{}, nil)
 
 	cfg := refresherConfigWithOrigin(curl, ref, "bionic")
 	cfg.DeployedSeries = "bionic"
@@ -369,7 +505,7 @@ func (s *charmHubCharmRefresherSuite) TestRefreshWithNoUpdates(c *gc.C) {
 	charmAdder := NewMockCharmAdder(ctrl)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(curl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(curl, origin, []string{}, nil)
 
 	cfg := refresherConfigWithOrigin(curl, ref, "")
 
@@ -394,7 +530,7 @@ func (s *charmHubCharmRefresherSuite) TestRefreshWithARevision(c *gc.C) {
 	charmAdder := NewMockCharmAdder(ctrl)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(curl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(curl, origin, []string{}, nil)
 
 	cfg := refresherConfigWithOrigin(curl, ref, "")
 
@@ -420,7 +556,7 @@ func (s *charmHubCharmRefresherSuite) TestRefreshWithOriginChannel(c *gc.C) {
 	charmAdder := NewMockCharmAdder(ctrl)
 
 	charmResolver := NewMockCharmResolver(ctrl)
-	charmResolver.EXPECT().ResolveCharm(curl, origin).Return(curl, origin, []string{}, nil)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, false).Return(curl, origin, []string{}, nil)
 
 	cfg := basicRefresherConfig(curl, ref)
 	cfg.CharmOrigin = corecharm.Origin{
@@ -439,6 +575,43 @@ func (s *charmHubCharmRefresherSuite) TestRefreshWithOriginChannel(c *gc.C) {
 
 	_, err = task.Refresh()
 	c.Assert(err, gc.ErrorMatches, `already running specified charm "meshuggah", revision 1`)
+}
+
+func (s *charmHubCharmRefresherSuite) TestRefreshWithCharmSwitch(c *gc.C) {
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	ref := "ch:aloupi-1"
+	curl := charm.MustParseURL(ref)
+	origin := commoncharm.Origin{
+		Source:       commoncharm.OriginCharmHub,
+		Risk:         "beta",
+		Architecture: "amd64",
+	}
+
+	charmAdder := NewMockCharmAdder(ctrl)
+
+	charmResolver := NewMockCharmResolver(ctrl)
+	charmResolver.EXPECT().ResolveCharm(curl, origin, true).Return(curl, origin, []string{}, nil)
+
+	cfg := basicRefresherConfig(curl, ref)
+	cfg.Switch = true // flag this as a refresh --switch operation
+	cfg.CharmOrigin = corecharm.Origin{
+		Source: corecharm.CharmHub,
+		Channel: &charm.Channel{
+			Risk: charm.Edge,
+		},
+	}
+	cfg.Channel = charm.Channel{
+		Risk: charm.Beta,
+	}
+
+	refresher := (&factory{}).maybeCharmHub(charmAdder, charmResolver)
+	task, err := refresher(cfg)
+	c.Assert(err, jc.ErrorIsNil)
+
+	_, err = task.Refresh()
+	c.Assert(err, gc.ErrorMatches, `already running specified charm "aloupi", revision 1`)
 }
 
 func (s *charmHubCharmRefresherSuite) TestAllowed(c *gc.C) {
@@ -511,6 +684,58 @@ func (s *charmHubCharmRefresherSuite) TestAllowedError(c *gc.C) {
 	allowed, err := task.Allowed(cfg)
 	c.Assert(err, gc.ErrorMatches, "trap")
 	c.Assert(allowed, jc.IsFalse)
+}
+
+func (s *charmHubCharmRefresherSuite) TestCharmHubResolveOriginEmpty(c *gc.C) {
+	origin := corecharm.Origin{}
+	channel := charm.Channel{}
+	result, err := charmHubOriginResolver(nil, origin, channel)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(result, gc.DeepEquals, commoncharm.CoreCharmOrigin(origin))
+}
+
+func (s *charmHubCharmRefresherSuite) TestCharmHubResolveOrigin(c *gc.C) {
+	track := "meshuggah"
+	origin := corecharm.Origin{}
+	channel := charm.Channel{
+		Track: track,
+	}
+	result, err := charmHubOriginResolver(nil, origin, channel)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(result, gc.DeepEquals, commoncharm.CoreCharmOrigin(corecharm.Origin{
+		Channel: &charm.Channel{
+			Track: track,
+			Risk:  "stable",
+		},
+	}))
+}
+
+func (s *charmHubCharmRefresherSuite) TestCharmHubResolveOriginEmptyTrackNonEmptyChannel(c *gc.C) {
+	origin := corecharm.Origin{
+		Channel: &charm.Channel{},
+	}
+	channel := charm.Channel{
+		Risk: "edge",
+	}
+	result, err := charmHubOriginResolver(nil, origin, channel)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(result, gc.DeepEquals, commoncharm.CoreCharmOrigin(corecharm.Origin{
+		Channel: &charm.Channel{
+			Risk: "edge",
+		},
+	}))
+}
+
+func (s *charmHubCharmRefresherSuite) TestCharmHubResolveOriginEmptyTrackEmptyChannel(c *gc.C) {
+	origin := corecharm.Origin{}
+	channel := charm.Channel{
+		Risk: "edge",
+	}
+	result, err := charmHubOriginResolver(nil, origin, channel)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(result, gc.DeepEquals, commoncharm.CoreCharmOrigin(corecharm.Origin{
+		Channel: &charm.Channel{},
+	}))
 }
 
 func basicRefresherConfig(curl *charm.URL, ref string) RefresherConfig {

@@ -4,8 +4,10 @@
 package lxd_test
 
 import (
+	stdcontext "context"
 	"net/http"
 	"net/http/httptest"
+	"path"
 
 	"github.com/golang/mock/gomock"
 	"github.com/juju/errors"
@@ -20,6 +22,7 @@ import (
 	environscloudspec "github.com/juju/juju/environs/cloudspec"
 	"github.com/juju/juju/environs/context"
 	"github.com/juju/juju/environs/testing"
+	"github.com/juju/juju/juju/osenv"
 	"github.com/juju/juju/provider/lxd"
 	"github.com/juju/juju/provider/lxd/lxdnames"
 	jujutesting "github.com/juju/juju/testing"
@@ -69,7 +72,9 @@ func (s *providerSuite) TestDetectClouds(c *gc.C) {
 	defer ctrl.Finish()
 
 	deps := s.createProvider(ctrl)
-	deps.configReader.EXPECT().ReadConfig(".config/lxc/config.yml").Return(lxd.LXCConfig{}, nil)
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{}, nil)
 
 	cloudDetector := deps.provider.(environs.CloudDetector)
 
@@ -84,7 +89,10 @@ func (s *providerSuite) TestRemoteDetectClouds(c *gc.C) {
 	defer ctrl.Finish()
 
 	deps := s.createProvider(ctrl)
-	deps.configReader.EXPECT().ReadConfig(".config/lxc/config.yml").Return(lxd.LXCConfig{
+
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{
 		DefaultRemote: "localhost",
 		Remotes: map[string]lxd.LXCRemoteConfig{
 			"nuc1": {
@@ -134,7 +142,9 @@ func (s *providerSuite) TestRemoteDetectCloudsWithConfigError(c *gc.C) {
 	defer ctrl.Finish()
 
 	deps := s.createProvider(ctrl)
-	deps.configReader.EXPECT().ReadConfig(".config/lxc/config.yml").Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
 
 	cloudDetector := deps.provider.(environs.CloudDetector)
 
@@ -149,6 +159,12 @@ func (s *providerSuite) TestDetectCloud(c *gc.C) {
 	defer ctrl.Finish()
 
 	deps := s.createProvider(ctrl)
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
 	cloudDetector := deps.provider.(environs.CloudDetector)
 
 	cloud, err := cloudDetector.DetectCloud("localhost")
@@ -166,7 +182,9 @@ func (s *providerSuite) TestRemoteDetectCloud(c *gc.C) {
 	deps := s.createProvider(ctrl)
 	cloudDetector := deps.provider.(environs.CloudDetector)
 
-	deps.configReader.EXPECT().ReadConfig(".config/lxc/config.yml").Return(lxd.LXCConfig{
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{
 		DefaultRemote: "localhost",
 		Remotes: map[string]lxd.LXCRemoteConfig{
 			"nuc1": {
@@ -202,7 +220,9 @@ func (s *providerSuite) TestRemoteDetectCloudWithConfigError(c *gc.C) {
 	deps := s.createProvider(ctrl)
 	cloudDetector := deps.provider.(environs.CloudDetector)
 
-	deps.configReader.EXPECT().ReadConfig(".config/lxc/config.yml").Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
 
 	_, err := cloudDetector.DetectCloud("nuc1")
 	c.Assert(err, gc.ErrorMatches, `cloud nuc1 not found`)
@@ -213,7 +233,9 @@ func (s *providerSuite) TestDetectCloudError(c *gc.C) {
 	defer ctrl.Finish()
 
 	deps := s.createProvider(ctrl)
-	deps.configReader.EXPECT().ReadConfig(".config/lxc/config.yml").Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(osenv.JujuXDGDataHomePath("lxd"), "config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), ".config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
+	deps.configReader.EXPECT().ReadConfig(path.Join(utils.Home(), "snap/lxd/current/.config/lxc/config.yml")).Return(lxd.LXCConfig{}, errors.New("bad"))
 
 	cloudDetector := deps.provider.(environs.CloudDetector)
 
@@ -484,7 +506,7 @@ func (s *providerSuite) TestPingFailWithNoEndpoint(c *gc.C) {
 
 	p, err := environs.Provider("lxd")
 	c.Assert(err, jc.ErrorIsNil)
-	err = p.Ping(context.NewCloudCallContext(), server.URL)
+	err = p.Ping(context.NewEmptyCloudCallContext(), server.URL)
 	c.Assert(err, gc.ErrorMatches, "no lxd server running at "+server.URL)
 }
 
@@ -494,7 +516,7 @@ func (s *providerSuite) TestPingFailWithHTTP(c *gc.C) {
 
 	p, err := environs.Provider("lxd")
 	c.Assert(err, jc.ErrorIsNil)
-	err = p.Ping(context.NewCloudCallContext(), server.URL)
+	err = p.Ping(context.NewEmptyCloudCallContext(), server.URL)
 	c.Assert(err, gc.ErrorMatches, "invalid URL \""+server.URL+"\": only HTTPS is supported")
 }
 
@@ -514,7 +536,7 @@ func (s *ProviderFunctionalSuite) SetUpTest(c *gc.C) {
 }
 
 func (s *ProviderFunctionalSuite) TestOpen(c *gc.C) {
-	env, err := environs.Open(s.provider, environs.OpenParams{
+	env, err := environs.Open(stdcontext.TODO(), s.provider, environs.OpenParams{
 		Cloud:  lxdCloudSpec(),
 		Config: s.Config,
 	})

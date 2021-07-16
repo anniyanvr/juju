@@ -25,7 +25,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/juju/clock"
 	"github.com/juju/errors"
-	jujuhttp "github.com/juju/http"
+	jujuhttp "github.com/juju/http/v2"
 	"github.com/juju/loggo"
 	"github.com/juju/names/v4"
 	"github.com/juju/utils/v2"
@@ -160,10 +160,10 @@ type state struct {
 	// authorize macaroon based login requests.
 	bakeryClient *httpbakery.Client
 
-	// proxy is the proxy used for this connection when not nil. If's expected
+	// proxier is the proxier used for this connection when not nil. If's expected
 	// the proxy has already been started when placing in this var. This struct
 	// will take the responsibility of closing the proxy.
-	proxy jujuproxy.Proxier
+	proxier jujuproxy.Proxier
 }
 
 // RedirectError is returned from Open when the controller
@@ -218,22 +218,6 @@ func Open(info *Info, opts DialOpts) (Connection, error) {
 		dialCtx = ctx1
 	}
 
-	if info.Proxier != nil {
-		if err := info.Proxier.Start(); err != nil {
-			return nil, errors.Annotate(err, "starting proxy for api connection")
-		}
-
-		switch p := info.Proxier.(type) {
-		case jujuproxy.TunnelProxier:
-			info.Addrs = []string{
-				fmt.Sprintf("%s:%s", p.Host(), p.Port()),
-			}
-		default:
-			info.Proxier.Stop()
-			return nil, errors.New("unknown proxier provided")
-		}
-	}
-
 	dialResult, err := dialAPI(dialCtx, info, opts)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -262,6 +246,15 @@ func Open(info *Info, opts DialOpts) (Connection, error) {
 		fallback:    http.DefaultTransport,
 	}
 
+	// Prefer the SNI hostname or controller name for the cookie URL
+	// so that it is stable when used with a HA controller cluster.
+	host := info.SNIHostName
+	if host == "" && info.ControllerUUID != "" {
+		host = info.ControllerUUID
+	}
+	if host == "" {
+		host = dialResult.addr
+	}
 	st := &state{
 		ctx:    context.Background(),
 		client: client,
@@ -271,7 +264,7 @@ func Open(info *Info, opts DialOpts) (Connection, error) {
 		ipAddr: dialResult.ipAddr,
 		cookieURL: &url.URL{
 			Scheme: "https",
-			Host:   dialResult.addr,
+			Host:   host,
 			Path:   "/",
 		},
 		pingerFacadeVersion: facadeVersions["Pinger"],
@@ -288,6 +281,7 @@ func Open(info *Info, opts DialOpts) (Connection, error) {
 		tlsConfig:    dialResult.tlsConfig,
 		bakeryClient: bakeryClient,
 		modelTag:     info.ModelTag,
+		proxier:      dialResult.proxier,
 	}
 	if !info.SkipLogin {
 		if err := loginWithContext(dialCtx, st, info); err != nil {
@@ -602,6 +596,7 @@ type dialResult struct {
 	addr      string
 	urlStr    string
 	ipAddr    string
+	proxier   jujuproxy.Proxier
 	tlsConfig *tls.Config
 }
 
@@ -633,6 +628,27 @@ func dialAPI(ctx context.Context, info *Info, opts0 DialOpts) (*dialResult, erro
 	if len(info.Addrs) == 0 {
 		return nil, errors.New("no API addresses to connect to")
 	}
+
+	addrs := info.Addrs[:]
+
+	if info.Proxier != nil {
+		if err := info.Proxier.Start(); err != nil {
+			return nil, errors.Annotate(err, "starting proxy for api connection")
+		}
+		logger.Debugf("starting proxier for connection")
+
+		switch p := info.Proxier.(type) {
+		case jujuproxy.TunnelProxier:
+			logger.Debugf("tunnel proxy in use at %s on port %s", p.Host(), p.Port())
+			addrs = []string{
+				fmt.Sprintf("%s:%s", p.Host(), p.Port()),
+			}
+		default:
+			info.Proxier.Stop()
+			return nil, errors.New("unknown proxier provided")
+		}
+	}
+
 	opts := dialOpts{
 		DialOpts:    opts0,
 		sniHostName: info.SNIHostName,
@@ -662,8 +678,8 @@ func dialAPI(ctx context.Context, info *Info, opts0 DialOpts) (*dialResult, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	// Encourage load balancing by shuffling controller addresses.
-	addrs := info.Addrs[:]
 	rand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
 
 	if opts.VerifyCA != nil {
@@ -682,6 +698,7 @@ func dialAPI(ctx context.Context, info *Info, opts0 DialOpts) (*dialResult, erro
 		return nil, errors.Trace(err)
 	}
 	logger.Infof("connection established to %q", dialInfo.urlStr)
+	dialInfo.proxier = info.Proxier
 	return dialInfo, nil
 }
 
@@ -1278,8 +1295,8 @@ func (s *state) Close() error {
 		close(s.closed)
 	}
 	<-s.broken
-	if s.proxy != nil {
-		s.proxy.Stop()
+	if s.proxier != nil {
+		s.proxier.Stop()
 	}
 	return err
 }
@@ -1317,6 +1334,16 @@ func (s *state) Addr() string {
 // connect to the API server.
 func (s *state) IPAddr() string {
 	return s.ipAddr
+}
+
+// IsProxied indicates if this connection was proxied
+func (s *state) IsProxied() bool {
+	return s.proxier != nil
+}
+
+// Proxy returns the proxy being used with this connection if one is being used.
+func (s *state) Proxy() jujuproxy.Proxier {
+	return s.proxier
 }
 
 // ModelTag implements base.APICaller.ModelTag.

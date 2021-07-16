@@ -136,6 +136,7 @@ func AllFacades() *facade.Registry {
 	reg("Action", 7, action.NewActionAPIV7)
 	reg("ActionPruner", 1, actionpruner.NewAPI)
 	reg("Agent", 2, agent.NewAgentAPIV2)
+	reg("Agent", 3, agent.NewAgentAPIV3)
 	reg("AgentTools", 1, agenttools.NewFacade)
 	reg("Annotations", 2, annotations.NewAPI)
 
@@ -151,6 +152,7 @@ func AllFacades() *facade.Registry {
 	reg("Bundle", 2, bundle.NewFacadeV2)
 	reg("Bundle", 3, bundle.NewFacadeV3)
 	reg("Bundle", 4, bundle.NewFacadeV4)
+	reg("Bundle", 5, bundle.NewFacadeV5)
 	reg("CharmHub", 1, charmhub.NewFacade)
 	reg("CharmRevisionUpdater", 2, charmrevisionupdater.NewCharmRevisionUpdaterAPI)
 	reg("Charms", 2, charms.NewFacadeV2)
@@ -171,10 +173,11 @@ func AllFacades() *facade.Registry {
 	// CAAS related facades.
 	// Move these to the correct place above once the feature flag disappears.
 	reg("CAASFirewaller", 1, caasfirewaller.NewStateFacadeLegacy)
-	reg("CAASFirewallerEmbedded", 1, caasfirewaller.NewStateFacadeEmbedded)
+	reg("CAASFirewallerEmbedded", 1, caasfirewaller.NewStateFacadeSidecar) // TODO(juju3): rename to CAASFirewallerSidecar
 	reg("CAASOperator", 1, caasoperator.NewStateFacade)
 	reg("CAASAdmission", 1, caasadmission.NewStateFacade)
-	reg("CAASAgent", 1, caasagent.NewStateFacade)
+	reg("CAASAgent", 1, caasagent.NewStateFacadeV1)
+	reg("CAASAgent", 2, caasagent.NewStateFacadeV2)
 	reg("CAASModelOperator", 1, caasmodeloperator.NewAPIFromContext)
 	reg("CAASOperatorProvisioner", 1, caasoperatorprovisioner.NewStateCAASOperatorProvisionerAPI)
 	reg("CAASOperatorUpgrader", 1, caasoperatorupgrader.NewStateCAASOperatorUpgraderAPI)
@@ -189,6 +192,7 @@ func AllFacades() *facade.Registry {
 	reg("Controller", 7, controller.NewControllerAPIv7)
 	reg("Controller", 8, controller.NewControllerAPIv8)
 	reg("Controller", 9, controller.NewControllerAPIv9)
+	reg("Controller", 10, controller.NewControllerAPIv10)
 	reg("CrossModelRelations", 1, crossmodelrelations.NewStateCrossModelRelationsAPIV1)
 	reg("CrossModelRelations", 2, crossmodelrelations.NewStateCrossModelRelationsAPI) // Adds WatchRelationChanges, removes WatchRelationUnits
 	reg("CrossController", 1, crosscontroller.NewStateCrossControllerAPI)
@@ -204,6 +208,7 @@ func AllFacades() *facade.Registry {
 	reg("Firewaller", 4, firewaller.NewStateFirewallerAPIV4)
 	reg("Firewaller", 5, firewaller.NewStateFirewallerAPIV5)
 	reg("Firewaller", 6, firewaller.NewStateFirewallerAPIV6)
+	reg("Firewaller", 7, firewaller.NewStateFirewallerAPIV7)
 	reg("FirewallRules", 1, firewallrules.NewFacade)
 	reg("HighAvailability", 2, highavailability.NewHighAvailabilityAPI)
 	reg("HostKeyReporter", 1, hostkeyreporter.NewFacade)
@@ -314,7 +319,8 @@ func AllFacades() *facade.Registry {
 
 	// Deprecated: V16 of the uniter facade retained to allow upgrading from 2.8.9 (LTS).
 	reg("Uniter", 16, uniter.NewUniterAPIV16)
-	reg("Uniter", 17, uniter.NewUniterAPI)
+	reg("Uniter", 17, uniter.NewUniterAPIV17)
+	reg("Uniter", 18, uniter.NewUniterAPI)
 
 	reg("Upgrader", 1, upgrader.NewUpgraderFacade)
 

@@ -33,7 +33,7 @@ import (
 	"github.com/juju/juju/worker/caasbroker"
 	"github.com/juju/juju/worker/caasenvironupgrader"
 	"github.com/juju/juju/worker/caasfirewaller"
-	"github.com/juju/juju/worker/caasfirewallerembedded"
+	"github.com/juju/juju/worker/caasfirewallersidecar"
 	"github.com/juju/juju/worker/caasmodeloperator"
 	"github.com/juju/juju/worker/caasoperatorprovisioner"
 	"github.com/juju/juju/worker/caasunitprovisioner"
@@ -364,6 +364,7 @@ func IAASManifolds(config ManifoldsConfig) dependency.Manifolds {
 			APICallerName:      apiCallerName,
 			CloudDestroyerName: environTrackerName,
 
+			Clock:                        config.Clock,
 			Logger:                       config.LoggingContext.GetLogger("juju.worker.undertaker"),
 			NewFacade:                    undertaker.NewFacade,
 			NewWorker:                    undertaker.NewWorker,
@@ -467,6 +468,7 @@ func CAASManifolds(config ManifoldsConfig) dependency.Manifolds {
 		undertakerName: ifNotUpgrading(ifNotAlive(undertaker.Manifold(undertaker.ManifoldConfig{
 			APICallerName:                apiCallerName,
 			CloudDestroyerName:           caasBrokerTrackerName,
+			Clock:                        config.Clock,
 			Logger:                       config.LoggingContext.GetLogger("juju.worker.undertaker"),
 			NewFacade:                    undertaker.NewFacade,
 			NewWorker:                    undertaker.NewWorker,
@@ -493,17 +495,17 @@ func CAASManifolds(config ManifoldsConfig) dependency.Manifolds {
 			},
 		)),
 
-		caasFirewallerNameEmbedded: ifNotMigrating(caasfirewallerembedded.Manifold(
-			caasfirewallerembedded.ManifoldConfig{
+		caasFirewallerNameSidecar: ifNotMigrating(caasfirewallersidecar.Manifold(
+			caasfirewallersidecar.ManifoldConfig{
 				APICallerName:  apiCallerName,
 				BrokerName:     caasBrokerTrackerName,
 				ControllerUUID: agentConfig.Controller().Id(),
 				ModelUUID:      agentConfig.Model().Id(),
-				NewClient: func(caller base.APICaller) caasfirewallerembedded.Client {
-					return caasfirewallerapi.NewClientEmbedded(caller)
+				NewClient: func(caller base.APICaller) caasfirewallersidecar.Client {
+					return caasfirewallerapi.NewClientSidecar(caller)
 				},
-				NewWorker: caasfirewallerembedded.NewWorker,
-				Logger:    config.LoggingContext.GetLogger("juju.worker.caasfirewallerembedded"),
+				NewWorker: caasfirewallersidecar.NewWorker,
+				Logger:    config.LoggingContext.GetLogger("juju.worker.caasfirewallersidecar"),
 			},
 		)),
 
@@ -687,7 +689,7 @@ const (
 	instanceMutaterName      = "instance-mutater"
 
 	caasFirewallerNameLegacy       = "caas-firewaller-legacy"
-	caasFirewallerNameEmbedded     = "caas-firewaller-embedded"
+	caasFirewallerNameSidecar      = "caas-firewaller-embedded"
 	caasModelOperatorName          = "caas-model-operator"
 	caasOperatorProvisionerName    = "caas-operator-provisioner"
 	caasApplicationProvisionerName = "caas-application-provisioner"

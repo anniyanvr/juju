@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	jujuhttp "github.com/juju/http"
+	jujuhttp "github.com/juju/http/v2"
 	"github.com/juju/loggo"
 	"github.com/juju/mgo/v2/bson"
 	"github.com/juju/names/v4"
@@ -160,8 +160,8 @@ func (s *logsinkSuite) TestLogging(c *gc.C) {
 	logPath := filepath.Join(s.config.LogDir, "logsink.log")
 	logContents, err := ioutil.ReadFile(logPath)
 	c.Assert(err, jc.ErrorIsNil)
-	line0 := modelUUID + ": machine-0 2015-06-01 23:02:01 INFO some.where foo.go:42 all is well\n"
-	line1 := modelUUID + ": machine-0 2015-06-01 23:02:02 ERROR else.where bar.go:99 oh noes\n"
+	line0 := modelUUID + ": machine-0 2015-06-01 23:02:01 INFO some.where foo.go:42 all is well \n"
+	line1 := modelUUID + ": machine-0 2015-06-01 23:02:02 ERROR else.where bar.go:99 oh noes \n"
 	c.Assert(string(logContents), gc.Equals, line0+line1)
 
 	// Check the file mode is as expected. This doesn't work on

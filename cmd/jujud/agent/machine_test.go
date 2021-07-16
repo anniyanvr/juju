@@ -6,6 +6,7 @@ package agent
 import (
 	"bufio"
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
 	"io/ioutil"
 	"os"
@@ -262,23 +263,31 @@ func (s *MachineSuite) TestDyingMachine(c *gc.C) {
 func (s *MachineSuite) TestManageModelRunsInstancePoller(c *gc.C) {
 	s.AgentSuite.PatchValue(&instancepoller.ShortPoll, 500*time.Millisecond)
 	s.AgentSuite.PatchValue(&instancepoller.ShortPollCap, 500*time.Millisecond)
+
+	stream := s.Environ.Config().AgentStream()
 	usefulVersion := version.Binary{
 		Number:  jujuversion.Current,
 		Arch:    arch.HostArch(),
 		Release: "ubuntu",
 	}
-	envtesting.AssertUploadFakeToolsVersions(
-		c, s.DefaultToolsStorage,
-		s.Environ.Config().AgentStream(),
-		s.Environ.Config().AgentStream(),
-		usefulVersion,
-	)
+	envtesting.AssertUploadFakeToolsVersions(c, s.DefaultToolsStorage, stream, stream, usefulVersion)
+
 	m, _, _ := s.primeAgent(c, state.JobManageModel)
 	a := s.newAgent(c, m)
-	defer a.Stop()
+	defer func() { _ = a.Stop() }()
 	go func() {
 		c.Check(a.Run(cmdtesting.Context(c)), jc.ErrorIsNil)
 	}()
+
+	// Wait for the workers to start. This ensures that the central
+	// hub referred to in startAddressPublisher has been assigned,
+	// and we will will not fail race tests with concurrent access.
+	select {
+	case <-a.WorkersStarted():
+	case <-time.After(testing.LongWait):
+		c.Fatalf("timed out waiting for agent workers to start")
+	}
+
 	startAddressPublisher(s, c, a)
 
 	// Add one unit to an application;
@@ -290,7 +299,7 @@ func (s *MachineSuite) TestManageModelRunsInstancePoller(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 
 	m, instId := s.waitProvisioned(c, unit)
-	insts, err := s.Environ.Instances(context.NewCloudCallContext(), []instance.Id{instId})
+	insts, err := s.Environ.Instances(context.NewEmptyCloudCallContext(), []instance.Id{instId})
 	c.Assert(err, jc.ErrorIsNil)
 
 	netEnv, ok := s.Environ.(environs.Networking)
@@ -299,7 +308,7 @@ func (s *MachineSuite) TestManageModelRunsInstancePoller(c *gc.C) {
 	// Since the dummy environ implements the environ.NetworkingEnviron,
 	// the instancepoller will pull the provider addresses directly from
 	// the environ and resolve their space ID.
-	ifLists, err := netEnv.NetworkInterfaces(context.NewCloudCallContext(), []instance.Id{instId})
+	ifLists, err := netEnv.NetworkInterfaces(context.NewEmptyCloudCallContext(), []instance.Id{instId})
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(ifLists, gc.HasLen, 1)
 
@@ -1064,7 +1073,7 @@ func (s *MachineSuite) TestHostedModelWorkers(c *gc.C) {
 	// The dummy provider blows up in the face of multi-model
 	// scenarios so patch in a minimal environs.Environ that's good
 	// enough to allow the model workers to run.
-	s.PatchValue(&newEnvirons, func(environs.OpenParams) (environs.Environ, error) {
+	s.PatchValue(&newEnvirons, func(stdcontext.Context, environs.OpenParams) (environs.Environ, error) {
 		return &minModelWorkersEnviron{}, nil
 	})
 
@@ -1089,7 +1098,7 @@ func (s *MachineSuite) TestWorkersForHostedModelWithInvalidCredential(c *gc.C) {
 	// scenarios so patch in a minimal environs.Environ that's good
 	// enough to allow the model workers to run.
 	loggo.GetLogger("juju.worker.dependency").SetLogLevel(loggo.TRACE)
-	s.PatchValue(&newEnvirons, func(environs.OpenParams) (environs.Environ, error) {
+	s.PatchValue(&newEnvirons, func(stdcontext.Context, environs.OpenParams) (environs.Environ, error) {
 		return &minModelWorkersEnviron{}, nil
 	})
 
@@ -1134,7 +1143,7 @@ func (s *MachineSuite) TestWorkersForHostedModelWithDeletedCredential(c *gc.C) {
 	// scenarios so patch in a minimal environs.Environ that's good
 	// enough to allow the model workers to run.
 	loggo.GetLogger("juju.worker.dependency").SetLogLevel(loggo.TRACE)
-	s.PatchValue(&newEnvirons, func(environs.OpenParams) (environs.Environ, error) {
+	s.PatchValue(&newEnvirons, func(stdcontext.Context, environs.OpenParams) (environs.Environ, error) {
 		return &minModelWorkersEnviron{}, nil
 	})
 

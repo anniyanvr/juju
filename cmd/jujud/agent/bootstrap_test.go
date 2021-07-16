@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	stdcontext "context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -682,9 +683,9 @@ func (s *BootstrapSuite) TestInitializeStateMinSocketTimeout(c *gc.C) {
 
 func (s *BootstrapSuite) TestBootstrapWithInvalidCredentialLogs(c *gc.C) {
 	called := false
-	newEnviron := func(ps environs.OpenParams) (environs.Environ, error) {
+	newEnviron := func(_ stdcontext.Context, ps environs.OpenParams) (environs.Environ, error) {
 		called = true
-		env, _ := environs.New(ps)
+		env, _ := environs.New(context.TODO(), ps)
 		return &mockDummyEnviron{env}, nil
 	}
 	s.PatchValue(&environsNewIAAS, newEnviron)
@@ -739,7 +740,8 @@ func (s *BootstrapSuite) testToolsMetadata(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 
 	// We don't write metadata at bootstrap anymore.
-	simplestreamsMetadata, err := envtools.ReadMetadata(s.toolsStorage, "released")
+	ss := simplestreams.NewSimpleStreams(sstesting.TestDataSourceFactory())
+	simplestreamsMetadata, err := envtools.ReadMetadata(ss, s.toolsStorage, "released")
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(simplestreamsMetadata, gc.HasLen, 0)
 
@@ -840,7 +842,7 @@ func (s *BootstrapSuite) makeTestModel(c *gc.C) {
 		Config: cfg,
 	})
 	c.Assert(err, jc.ErrorIsNil)
-	env, err := environs.Open(provider, environs.OpenParams{
+	env, err := environs.Open(context.TODO(), provider, environs.OpenParams{
 		Cloud:  dummy.SampleCloudSpec(),
 		Config: cfg,
 	})
@@ -848,7 +850,7 @@ func (s *BootstrapSuite) makeTestModel(c *gc.C) {
 	err = env.PrepareForBootstrap(nullContext(), "controller-1")
 	c.Assert(err, jc.ErrorIsNil)
 
-	callCtx := envcontext.NewCloudCallContext()
+	callCtx := envcontext.NewEmptyCloudCallContext()
 	s.AddCleanup(func(c *gc.C) {
 		err := env.DestroyController(callCtx, controllerCfg.ControllerUUID())
 		c.Assert(err, jc.ErrorIsNil)

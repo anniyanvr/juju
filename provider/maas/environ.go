@@ -4,6 +4,7 @@
 package maas
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -127,7 +128,7 @@ func NewEnviron(cloud environscloudspec.CloudSpec, cfg *config.Config, getCaps M
 	if err := env.SetConfig(cfg); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := env.SetCloudSpec(cloud); err != nil {
+	if err := env.SetCloudSpec(stdcontext.TODO(), cloud); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -272,7 +273,7 @@ func (env *maasEnviron) SetConfig(cfg *config.Config) error {
 }
 
 // SetCloudSpec is specified in the environs.Environ interface.
-func (env *maasEnviron) SetCloudSpec(spec environscloudspec.CloudSpec) error {
+func (env *maasEnviron) SetCloudSpec(_ stdcontext.Context, spec environscloudspec.CloudSpec) error {
 	env.ecfgMutex.Lock()
 	defer env.ecfgMutex.Unlock()
 
@@ -1874,7 +1875,7 @@ func (env *maasEnviron) subnetToSpaceIds(ctx context.ProviderCallContext) (map[s
 // Spaces returns all the spaces, that have subnets, known to the provider.
 // Space name is not filled in as the provider doesn't know the juju name for
 // the space.
-func (env *maasEnviron) Spaces(ctx context.ProviderCallContext) ([]corenetwork.SpaceInfo, error) {
+func (env *maasEnviron) Spaces(ctx context.ProviderCallContext) (corenetwork.SpaceInfos, error) {
 	if !env.usingMAAS2() {
 		return env.spaces1(ctx)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/juju/charm/v9"
 	charmresource "github.com/juju/charm/v9/resource"
 	csclientparams "github.com/juju/charmrepo/v7/csclient/params"
+	csparams "github.com/juju/charmrepo/v7/csclient/params"
 	"github.com/juju/cmd"
 	"github.com/juju/cmd/cmdtesting"
 	"github.com/juju/errors"
@@ -106,7 +107,7 @@ func (s *BaseRefreshSuite) SetUpTest(c *gc.C) {
 
 	s.resolvedChannel = csclientparams.StableChannel
 	s.resolveCharm = mockCharmResolver{
-		resolveFunc: func(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error) {
+		resolveFunc: func(url *charm.URL, preferredOrigin commoncharm.Origin, _ bool) (*charm.URL, commoncharm.Origin, []string, error) {
 			s.AddCall("ResolveCharm", url, preferredOrigin)
 			if err := s.NextErr(); err != nil {
 				return nil, commoncharm.Origin{}, nil, err
@@ -422,8 +423,12 @@ func (s *RefreshErrorsStateSuite) deployApplication(c *gc.C) {
 
 func (s *RefreshErrorsStateSuite) TestInvalidSwitchURL(c *gc.C) {
 	s.deployApplication(c)
+
+	url := charm.MustParseURL("cs:missing")
+	s.fakeAPI.Call("ResolveWithPreferredChannel", url).Returns(url, csparams.Channel("stable"), []string{}, errors.Errorf(`bad`))
+
 	_, err := s.runRefresh(c, s.cmd, "riak", "--switch=cs:missing")
-	c.Assert(err, gc.ErrorMatches, `cannot resolve URL "cs:missing":.*`)
+	c.Assert(err, gc.ErrorMatches, `bad`)
 }
 
 func (s *RefreshErrorsStateSuite) TestNoPathFails(c *gc.C) {
@@ -948,11 +953,11 @@ func (m *mockCharmClient) CharmInfo(curl string) (*apicommoncharms.CharmInfo, er
 
 type mockCharmResolver struct {
 	testing.Stub
-	resolveFunc func(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error)
+	resolveFunc func(url *charm.URL, preferredOrigin commoncharm.Origin, switchCharm bool) (*charm.URL, commoncharm.Origin, []string, error)
 }
 
-func (m *mockCharmResolver) ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error) {
-	return m.resolveFunc(url, preferredOrigin)
+func (m *mockCharmResolver) ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin, switchCharm bool) (*charm.URL, commoncharm.Origin, []string, error) {
+	return m.resolveFunc(url, preferredOrigin, switchCharm)
 }
 
 type mockCharmRefreshClient struct {

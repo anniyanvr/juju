@@ -1,3 +1,4 @@
+#!/bin/bash -e
 # juju_version will return only the version and not the architecture/substrait
 # of the juju version.
 # This will use any juju on $PATH
@@ -36,41 +37,38 @@ ensure() {
 	bootstrap "${model}" "${output}"
 }
 
-# bootstrap will attempt to bootstrap a controller on the correct provider.
+# bootstrap will attempt to bootstrap a controller on the correct cloud.
 # It will check if there is an existing controller with the same name and bail,
 # if there is.
 #
 # The name of the controller is randomised, but the model name is used to
 # override the default model name for that controller. That way we have a
-# unqiue namespaced models instead of the "default" model name.
+# unique namespaced models instead of the "default" model name.
 # This helps with providing encapsulated tests without having to bootstrap a
 # controller for every test in a suite.
 #
 # The stdout of the file can be piped to an optional output file.
 #
 # ```
-# bootstrap <model name> <file to output logs>
+# bootstrap <cloud name> <controller name> <file to output logs> <model name>
 # ```
 bootstrap() {
-	local provider name output model bootstrapped_name
+	local cloud name output model bootstrapped_name
 	case "${BOOTSTRAP_PROVIDER:-}" in
 	"aws" | "ec2")
-		provider="aws"
+		cloud="aws"
 		;;
 	"localhost" | "lxd")
-		provider="lxd"
+		cloud="lxd"
 		;;
-	"lxd-remote")
-		provider="lxd-remote"
+	"lxd-remote" | "vsphere" | "openstack" | "k8s")
+		cloud="${BOOTSTRAP_CLOUD}"
 		;;
 	"manual")
 		manual_name=${1}
 		shift
 
-		provider="${manual_name}"
-		;;
-	"microk8s")
-		provider="microk8s"
+		cloud="${manual_name}"
 		;;
 	*)
 		echo "Unexpected bootstrap provider (${BOOTSTRAP_PROVIDER})."
@@ -102,7 +100,8 @@ bootstrap() {
 			export BOOTSTRAP_REUSE="false"
 		fi
 	fi
-	if [[ ${BOOTSTRAP_REUSE} == "true" ]]; then
+	if [[ ${BOOTSTRAP_REUSE} == "true" && ${BOOTSTRAP_PROVIDER} != "k8s" ]]; then
+		# juju show-machine not supported with k8s controllers
 		OUT=$(juju show-machine -m "${bootstrapped_name}":controller --format=json | jq -r ".machines | .[] | .series")
 		if [[ -n ${OUT} ]]; then
 			OUT=$(echo "${OUT}" | grep -oh "${BOOTSTRAP_SERIES}" || true)
@@ -117,7 +116,7 @@ bootstrap() {
 
 	START_TIME=$(date +%s)
 	if [[ ${BOOTSTRAP_REUSE} == "true" ]]; then
-		echo "====> Reusing bootstrapped juju ($(green "${version}:${provider}"))"
+		echo "====> Reusing bootstrapped juju ($(green "${version}:${cloud}"))"
 
 		OUT=$(juju models -c "${bootstrapped_name}" --format=json 2>/dev/null | jq '.models[] | .["short-name"]' | grep "${model}" || true)
 		if [[ -n ${OUT} ]]; then
@@ -127,12 +126,13 @@ bootstrap() {
 			exit 1
 		fi
 
-		add_model "${model}" "${provider}" "${bootstrapped_name}" "${output}"
+		add_model "${model}" "${cloud}" "${bootstrapped_name}" "${output}"
 		name="${bootstrapped_name}"
 	else
-		echo "====> Bootstrapping juju ($(green "${version}:${provider}"))"
-		juju_bootstrap "${provider}" "${name}" "${model}" "${output}"
+		echo "====> Bootstrapping juju ($(green "${version}:${cloud}"))"
+		juju_bootstrap "${cloud}" "${name}" "${model}" "${output}"
 	fi
+
 	END_TIME=$(date +%s)
 
 	echo "====> Bootstrapped juju ($((END_TIME - START_TIME))s)"
@@ -143,28 +143,57 @@ bootstrap() {
 # add_model is used to add a model for tracking. This is for internal use only
 # and shouldn't be used by any of the tests directly.
 add_model() {
-	local model provider controller
+	local model cloud controller
 
 	model=${1}
-	provider=${2}
+	cloud=${2}
 	controller=${3}
 	output=${4}
 
-	OUT=$(juju controllers --format=json | jq '.controllers | .["${bootstrapped_name}"] | .cloud' | grep "${provider}" || true)
+	OUT=$(juju controllers --format=json | jq '.controllers | .["${bootstrapped_name}"] | .cloud' | grep "${cloud}" || true)
 	if [[ -n ${OUT} ]]; then
-		juju add-model -c "${controller}" "${model}" "${provider}" 2>&1 | OUTPUT "${output}"
+		juju add-model -c "${controller}" "${model}" "${cloud}" 2>&1 | OUTPUT "${output}"
 	else
 		juju add-model -c "${controller}" "${model}" 2>&1 | OUTPUT "${output}"
 	fi
+
+	post_add_model
+
 	echo "${model}" >>"${TEST_DIR}/models"
+}
+
+# add_images_for_vsphere is used to add-image with known vSphere template paths for LTS series
+# and shouldn't be used by any of the tests directly.
+add_images_for_vsphere() {
+	juju metadata add-image juju-ci-root/templates/focal-test-template --series focal
+	juju metadata add-image juju-ci-root/templates/bionic-test-template --series bionic
+	juju metadata add-image juju-ci-root/templates/xenial-test-template --series xenial
+}
+
+# setup_vsphere_simplestreams generates image metadata for use during vSphere bootstrap.  There is
+# an assumption made with regards to the template name in the Boston vSphere.  This is for internal
+# use only and shouldn't be used by any of the tests directly.
+setup_vsphere_simplestreams() {
+	local dir series
+
+	dir=${1}
+	series=${2:-"focal"}
+
+	if [[ ! -f ${dir} ]]; then
+		mkdir "${dir}" || true
+	fi
+
+	cloud_endpoint=$(juju clouds --client --format=json | jq -r ".[\"$BOOTSTRAP_CLOUD\"] | .endpoint")
+	# pipe output to test dir, otherwise becomes part of the return value.
+	juju metadata generate-image -i juju-ci-root/templates/"${series}"-test-template -r "${BOOTSTRAP_REGION}" -d "${dir}" -u "${cloud_endpoint}" -s "${series}" >>"${TEST_DIR}"/simplestreams 2>&1
 }
 
 # juju_bootstrap is used to bootstrap a model for tracking. This is for internal
 # use only and shouldn't be used by any of the tests directly.
 juju_bootstrap() {
-	local provider name model output
+	local cloud name model output
 
-	provider=${1}
+	cloud=${1}
 	shift
 
 	name=${1}
@@ -188,15 +217,52 @@ juju_bootstrap() {
 		;;
 	esac
 
-	# When double quotes are added to ${series}, the juju bootstrap
-	# command looks correct, and works outside of the harness, but
-	# does not run, goes directly to cleanup.
-	#shellcheck disable=SC2086
-	juju bootstrap ${series} \
-		--build-agent=${BUILD_AGENT} \
-		"${provider}" "${name}" -d "${model}" "$@" 2>&1 | OUTPUT "${output}"
+	pre_bootstrap
 
+	command="juju bootstrap ${series} --build-agent=${BUILD_AGENT} ${cloud} ${name} -d ${model} ${BOOTSTRAP_ADDITIONAL_ARGS}"
+	# keep $@ here, otherwise hit SC2124
+	${command} "$@" 2>&1 | OUTPUT "${output}"
 	echo "${name}" >>"${TEST_DIR}/jujus"
+
+	post_bootstrap
+}
+
+# pre_bootstrap contains setup required before bootstrap specific to providers
+# and shouldn't be used by any of the tests directly.
+pre_bootstrap() {
+	# ensure BOOTSTRAP_ADDITIONAL_ARGS is defined, even if not necessary.
+	export BOOTSTRAP_ADDITIONAL_ARGS=""
+	case "${BOOTSTRAP_PROVIDER:-}" in
+	"vsphere")
+		echo "====> Creating image simplestream metadata for juju ($(green "${version}:${cloud}"))"
+
+		image_streams_dir=${TEST_DIR}/image-streams
+		setup_vsphere_simplestreams "${image_streams_dir}" "${BOOTSTRAP_SERIES}"
+		export BOOTSTRAP_ADDITIONAL_ARGS="--metadata-source ${image_streams_dir}"
+		;;
+	esac
+}
+
+# post_bootstrap contains actions required after bootstrap specific to providers
+# and shouldn't be used by any of the tests directly.  Calls post_add_model
+# models are added during bootstrap.
+post_bootstrap() {
+	case "${BOOTSTRAP_PROVIDER:-}" in
+	"vsphere")
+		rm -r "${TEST_DIR}"/image-streams
+		;;
+	esac
+	post_add_model
+}
+
+# post_add_model does provider specific config required after a new model is added
+# and shouldn't be used by any of the tests directly.
+post_add_model() {
+	case "${BOOTSTRAP_PROVIDER:-}" in
+	"vsphere")
+		add_images_for_vsphere
+		;;
+	esac
 }
 
 # destroy_model takes a model name and destroys a model. It first checks if the
@@ -313,6 +379,11 @@ introspect_controller() {
 	local name
 
 	name=${1}
+
+	if [[ ${BOOTSTRAP_PROVIDER} == "k8s" ]]; then
+		echo "====> TODO: Implement introspection for k8s"
+		return
+	fi
 
 	idents=$(juju machines -m "${name}:controller" --format=json | jq ".machines | keys | .[]")
 	if [[ -z ${idents} ]]; then

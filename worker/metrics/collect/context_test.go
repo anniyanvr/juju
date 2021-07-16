@@ -14,6 +14,7 @@ import (
 
 	"github.com/juju/juju/juju/sockets"
 	"github.com/juju/juju/worker/metrics/collect"
+	"github.com/juju/juju/worker/uniter/runner/context"
 )
 
 type ContextSuite struct {
@@ -65,15 +66,27 @@ func (*dummyPaths) ComponentDir(name string) string { return "/dummy/" + name }
 func (s *ContextSuite) TestHookContextEnv(c *gc.C) {
 	ctx := collect.NewHookContext("u/0", s.recorder)
 	paths := &dummyPaths{}
-	vars, err := ctx.HookVars(paths, false, func(k string) string {
-		switch k {
-		case "PATH", "Path":
-			return "pathy"
-		default:
-			c.Errorf("unexpected get env call for %q", k)
-		}
-		return ""
-	})
+	vars, err := ctx.HookVars(paths, false, context.NewRemoteEnvironmenter(
+		func() []string { return []string{} },
+		func(k string) string {
+			switch k {
+			case "PATH", "Path":
+				return "pathy"
+			default:
+				c.Errorf("unexpected get env call for %q", k)
+			}
+			return ""
+		},
+		func(k string) (string, bool) {
+			switch k {
+			case "PATH", "Path":
+				return "pathy", true
+			default:
+				c.Errorf("unexpected get env call for %q", k)
+			}
+			return "", false
+		},
+	))
 	c.Assert(err, jc.ErrorIsNil)
 	varMap, err := keyvalues.Parse(vars, true)
 	c.Assert(err, jc.ErrorIsNil)

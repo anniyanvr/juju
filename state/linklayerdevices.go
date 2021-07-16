@@ -290,6 +290,7 @@ func (dev *LinkLayerDevice) AddAddressOps(args LinkLayerDeviceAddress) ([]txn.Op
 		GatewayAddress:   args.GatewayAddress,
 		IsDefaultGateway: args.IsDefaultGateway,
 		Origin:           args.Origin,
+		IsSecondary:      args.IsSecondary,
 	}
 	return []txn.Op{insertIPAddressDocOp(&newDoc)}, nil
 }
@@ -582,7 +583,7 @@ func (dev *LinkLayerDevice) EthernetDeviceForBridge(
 		InterfaceName:       name,
 		MACAddress:          network.GenerateVirtualMACAddress(),
 		ConfigType:          network.ConfigDHCP,
-		InterfaceType:       network.EthernetInterface,
+		InterfaceType:       network.EthernetDevice,
 		MTU:                 int(dev.MTU()),
 		ParentInterfaceName: dev.Name(),
 		VirtualPortType:     dev.VirtualPortType(),

@@ -1,7 +1,7 @@
 // Copyright 2012, 2013 Canonical Ltd.
 // Licensed under the AGPLv3, see LICENCE file for details.
 
-// The dummy provider implements an environment provider for testing
+// Package dummy implements an environment provider for testing
 // purposes, registered with environs under the name "dummy".
 //
 // The configuration YAML for the testing environment
@@ -19,6 +19,7 @@
 package dummy
 
 import (
+	stdcontext "context"
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
@@ -65,7 +66,7 @@ import (
 	corelease "github.com/juju/juju/core/lease"
 	"github.com/juju/juju/core/lxdprofile"
 	"github.com/juju/juju/core/model"
-	corenetwork "github.com/juju/juju/core/network"
+	"github.com/juju/juju/core/network"
 	"github.com/juju/juju/core/network/firewall"
 	"github.com/juju/juju/core/presence"
 	"github.com/juju/juju/core/status"
@@ -112,7 +113,7 @@ func SampleCloudSpec() environscloudspec.CloudSpec {
 	}
 }
 
-// SampleConfig() returns an environment configuration with all required
+// SampleConfig returns an environment configuration with all required
 // attributes set.
 func SampleConfig() testing.Attrs {
 	return testing.Attrs{
@@ -182,14 +183,14 @@ type OpDestroy struct {
 type OpNetworkInterfaces struct {
 	Env        string
 	InstanceId instance.Id
-	Info       corenetwork.InterfaceInfos
+	Info       network.InterfaceInfos
 }
 
 type OpSubnets struct {
 	Env        string
 	InstanceId instance.Id
-	SubnetIds  []corenetwork.Id
-	Info       []corenetwork.SubnetInfo
+	SubnetIds  []network.Id
+	Info       []network.SubnetInfo
 }
 
 type OpStartInstance struct {
@@ -199,8 +200,8 @@ type OpStartInstance struct {
 	PossibleTools     coretools.List
 	Instance          instances.Instance
 	Constraints       constraints.Value
-	SubnetsToZones    map[corenetwork.Id][]string
-	NetworkInfo       corenetwork.InterfaceInfos
+	SubnetsToZones    map[network.Id][]string
+	NetworkInfo       network.InterfaceInfos
 	RootDisk          *storage.VolumeParams
 	Volumes           []storage.Volume
 	VolumeAttachments []storage.VolumeAttachment
@@ -368,37 +369,37 @@ func Reset(c *gc.C) {
 	}
 }
 
-func (state *environState) destroy() {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	state.destroyLocked()
+func (s *environState) destroy() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.destroyLocked()
 }
 
-func (state *environState) destroyLocked() {
-	if !state.bootstrapped {
+func (s *environState) destroyLocked() {
+	if !s.bootstrapped {
 		return
 	}
-	apiServer := state.apiServer
-	apiStatePool := state.apiStatePool
-	leaseManager := state.leaseManager
-	multiWatcherWorker := state.multiWatcherWorker
-	modelCacheWorker := state.modelCacheWorker
-	state.apiServer = nil
-	state.apiStatePool = nil
-	state.apiState = nil
-	state.controller = nil
-	state.leaseManager = nil
-	state.bootstrapped = false
-	state.hub = nil
-	state.multiWatcherWorker = nil
-	state.modelCacheWorker = nil
+	apiServer := s.apiServer
+	apiStatePool := s.apiStatePool
+	leaseManager := s.leaseManager
+	multiWatcherWorker := s.multiWatcherWorker
+	modelCacheWorker := s.modelCacheWorker
+	s.apiServer = nil
+	s.apiStatePool = nil
+	s.apiState = nil
+	s.controller = nil
+	s.leaseManager = nil
+	s.bootstrapped = false
+	s.hub = nil
+	s.multiWatcherWorker = nil
+	s.modelCacheWorker = nil
 
 	// Release the lock while we close resources. In particular,
 	// we must not hold the lock while the API server is being
 	// closed, as it may need to interact with the Environ while
 	// shutting down.
-	state.mu.Unlock()
-	defer state.mu.Lock()
+	s.mu.Unlock()
+	defer s.mu.Lock()
 
 	// The apiServer depends on the modelCache, so stop the apiserver first.
 	if apiServer != nil {
@@ -664,7 +665,7 @@ func (*environProvider) CredentialSchemas() map[cloud.AuthType]cloud.CredentialS
 	}
 }
 
-func (*environProvider) DetectCredentials() (*cloud.CloudCredential, error) {
+func (*environProvider) DetectCredentials(cloudName string) (*cloud.CloudCredential, error) {
 	return cloud.NewEmptyCloudCredential(), nil
 }
 
@@ -704,7 +705,7 @@ func (*environProvider) Version() int {
 	return 0
 }
 
-func (p *environProvider) Open(args environs.OpenParams) (environs.Environ, error) {
+func (p *environProvider) Open(_ stdcontext.Context, args environs.OpenParams) (environs.Environ, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	ecfg, err := p.newConfig(args.Config)
@@ -837,7 +838,7 @@ func (e *environ) Bootstrap(ctx environs.BootstrapContext, callCtx context.Provi
 	series := config.PreferredSeries(e.Config())
 	i := &dummyInstance{
 		id:           BootstrapInstanceId,
-		addresses:    corenetwork.NewProviderAddresses("localhost"),
+		addresses:    network.NewProviderAddresses("localhost"),
 		machineId:    agent.BootstrapControllerId,
 		series:       series,
 		firewallMode: e.Config().FirewallMode(),
@@ -1203,7 +1204,7 @@ func (e *environ) StartInstance(ctx context.ProviderCallContext, args environs.S
 	idString := fmt.Sprintf("%s-%d", e.name, estate.maxId)
 	// Add the addresses we want to see in the machine doc. This means both
 	// IPv4 and IPv6 loopback, as well as the DNS name.
-	addrs := corenetwork.NewProviderAddresses(idString+".dns", "127.0.0.1", "::1")
+	addrs := network.NewProviderAddresses(idString+".dns", "127.0.0.1", "::1")
 	logger.Debugf("StartInstance addresses: %v", addrs)
 	i := &dummyInstance{
 		id:           instance.Id(idString),
@@ -1262,16 +1263,16 @@ func (e *environ) StartInstance(ctx context.ProviderCallContext, args environs.S
 	}
 	// Simulate subnetsToZones gets populated when spaces given in constraints.
 	spaces := args.Constraints.IncludeSpaces()
-	var subnetsToZones map[corenetwork.Id][]string
+	var subnetsToZones map[network.Id][]string
 	for isp := range spaces {
 		// Simulate 2 subnets per space.
 		if subnetsToZones == nil {
-			subnetsToZones = make(map[corenetwork.Id][]string)
+			subnetsToZones = make(map[network.Id][]string)
 		}
 		for isn := 0; isn < 2; isn++ {
 			providerId := fmt.Sprintf("subnet-%d", isp+isn)
 			zone := fmt.Sprintf("zone%d", isp+isn)
-			subnetsToZones[corenetwork.Id(providerId)] = []string{zone}
+			subnetsToZones[network.Id(providerId)] = []string{zone}
 		}
 	}
 	// Simulate creating volumes when requested.
@@ -1403,42 +1404,42 @@ func (env *environ) SupportsContainerAddresses(ctx context.ProviderCallContext) 
 }
 
 // Spaces is specified on environs.Networking.
-func (env *environ) Spaces(ctx context.ProviderCallContext) ([]corenetwork.SpaceInfo, error) {
+func (env *environ) Spaces(ctx context.ProviderCallContext) (network.SpaceInfos, error) {
 	if err := env.checkBroken("Spaces"); err != nil {
-		return []corenetwork.SpaceInfo{}, err
+		return []network.SpaceInfo{}, err
 	}
-	return []corenetwork.SpaceInfo{{
+	return []network.SpaceInfo{{
 		Name:       "foo",
-		ProviderId: corenetwork.Id("0"),
-		Subnets: []corenetwork.SubnetInfo{{
-			ProviderId:        corenetwork.Id("1"),
+		ProviderId: network.Id("0"),
+		Subnets: []network.SubnetInfo{{
+			ProviderId:        network.Id("1"),
 			AvailabilityZones: []string{"zone1"},
 		}, {
-			ProviderId:        corenetwork.Id("2"),
+			ProviderId:        network.Id("2"),
 			AvailabilityZones: []string{"zone1"},
 		}}}, {
 		Name:       "Another Foo 99!",
 		ProviderId: "1",
-		Subnets: []corenetwork.SubnetInfo{{
-			ProviderId:        corenetwork.Id("3"),
+		Subnets: []network.SubnetInfo{{
+			ProviderId:        network.Id("3"),
 			AvailabilityZones: []string{"zone1"},
 		}}}, {
 		Name:       "foo-",
 		ProviderId: "2",
-		Subnets: []corenetwork.SubnetInfo{{
-			ProviderId:        corenetwork.Id("4"),
+		Subnets: []network.SubnetInfo{{
+			ProviderId:        network.Id("4"),
 			AvailabilityZones: []string{"zone1"},
 		}}}, {
 		Name:       "---",
 		ProviderId: "3",
-		Subnets: []corenetwork.SubnetInfo{{
-			ProviderId:        corenetwork.Id("5"),
+		Subnets: []network.SubnetInfo{{
+			ProviderId:        network.Id("5"),
 			AvailabilityZones: []string{"zone1"},
 		}}}}, nil
 }
 
 // NetworkInterfaces implements Environ.NetworkInterfaces().
-func (env *environ) NetworkInterfaces(ctx context.ProviderCallContext, ids []instance.Id) ([]corenetwork.InterfaceInfos, error) {
+func (env *environ) NetworkInterfaces(ctx context.ProviderCallContext, ids []instance.Id) ([]network.InterfaceInfos, error) {
 	if err := env.checkBroken("NetworkInterfaces"); err != nil {
 		return nil, err
 	}
@@ -1452,32 +1453,32 @@ func (env *environ) NetworkInterfaces(ctx context.ProviderCallContext, ids []ins
 
 	// Simulate 3 NICs - primary and secondary enabled plus a disabled NIC.
 	// all configured using DHCP and having fake DNS servers and gateway.
-	infos := make([]corenetwork.InterfaceInfos, len(ids))
+	infos := make([]network.InterfaceInfos, len(ids))
 	for idIndex, instId := range ids {
-		infos[idIndex] = make(corenetwork.InterfaceInfos, 3)
+		infos[idIndex] = make(network.InterfaceInfos, 3)
 		for i, netName := range []string{"private", "public", "disabled"} {
-			infos[idIndex][i] = corenetwork.InterfaceInfo{
+			infos[idIndex][i] = network.InterfaceInfo{
 				DeviceIndex:      i,
-				ProviderId:       corenetwork.Id(fmt.Sprintf("dummy-eth%d", i)),
-				ProviderSubnetId: corenetwork.Id("dummy-" + netName),
-				InterfaceType:    corenetwork.EthernetInterface,
+				ProviderId:       network.Id(fmt.Sprintf("dummy-eth%d", i)),
+				ProviderSubnetId: network.Id("dummy-" + netName),
+				InterfaceType:    network.EthernetDevice,
 				InterfaceName:    fmt.Sprintf("eth%d", i),
 				VLANTag:          i,
 				MACAddress:       fmt.Sprintf("aa:bb:cc:dd:ee:f%d", i),
 				Disabled:         i == 2,
 				NoAutoStart:      i%2 != 0,
-				ConfigType:       corenetwork.ConfigDHCP,
-				Addresses: corenetwork.ProviderAddresses{
-					corenetwork.NewProviderAddress(
+				Addresses: network.ProviderAddresses{
+					network.NewProviderAddress(
 						fmt.Sprintf("0.%d.0.%d", (i+1)*10+idIndex, estate.maxAddr+2),
-						corenetwork.WithCIDR(fmt.Sprintf("0.%d.0.0/24", (i+1)*10)),
+						network.WithCIDR(fmt.Sprintf("0.%d.0.0/24", (i+1)*10)),
+						network.WithConfigType(network.ConfigDHCP),
 					),
 				},
-				DNSServers: corenetwork.NewProviderAddresses("ns1.dummy", "ns2.dummy"),
-				GatewayAddress: corenetwork.NewProviderAddress(
+				DNSServers: network.NewProviderAddresses("ns1.dummy", "ns2.dummy"),
+				GatewayAddress: network.NewProviderAddress(
 					fmt.Sprintf("0.%d.0.1", (i+1)*10+idIndex),
 				),
-				Origin: corenetwork.OriginProvider,
+				Origin: network.OriginProvider,
 			}
 		}
 
@@ -1505,9 +1506,9 @@ func (az azShim) Available() bool {
 }
 
 // AvailabilityZones implements environs.ZonedEnviron.
-func (env *environ) AvailabilityZones(ctx context.ProviderCallContext) (corenetwork.AvailabilityZones, error) {
+func (env *environ) AvailabilityZones(ctx context.ProviderCallContext) (network.AvailabilityZones, error) {
 	// TODO(dimitern): Fix this properly.
-	return corenetwork.AvailabilityZones{
+	return network.AvailabilityZones{
 		azShim{"zone1", true},
 		azShim{"zone2", false},
 		azShim{"zone3", true},
@@ -1551,8 +1552,8 @@ func (env *environ) DeriveAvailabilityZones(ctx context.ProviderCallContext, arg
 
 // Subnets implements environs.Environ.Subnets.
 func (env *environ) Subnets(
-	ctx context.ProviderCallContext, instId instance.Id, subnetIds []corenetwork.Id,
-) ([]corenetwork.SubnetInfo, error) {
+	ctx context.ProviderCallContext, instId instance.Id, subnetIds []network.Id,
+) ([]network.SubnetInfo, error) {
 	if err := env.checkBroken("Subnets"); err != nil {
 		return nil, err
 	}
@@ -1569,7 +1570,7 @@ func (env *environ) Subnets(
 		return env.subnetsForSpaceDiscovery(estate)
 	}
 
-	allSubnets := []corenetwork.SubnetInfo{{
+	allSubnets := []network.SubnetInfo{{
 		CIDR:              "0.10.0.0/24",
 		ProviderId:        "dummy-private",
 		AvailabilityZones: []string{"zone1", "zone2"},
@@ -1579,7 +1580,7 @@ func (env *environ) Subnets(
 	}}
 
 	// Filter result by ids, if given.
-	var result []corenetwork.SubnetInfo
+	var result []network.SubnetInfo
 	for _, subId := range subnetIds {
 		switch subId {
 		case "dummy-private":
@@ -1589,7 +1590,7 @@ func (env *environ) Subnets(
 		}
 	}
 	if len(subnetIds) == 0 {
-		result = append([]corenetwork.SubnetInfo{}, allSubnets...)
+		result = append([]network.SubnetInfo{}, allSubnets...)
 	}
 	if len(result) == 0 {
 		// No results, so just return them now.
@@ -1611,33 +1612,33 @@ func (env *environ) Subnets(
 	return result, nil
 }
 
-func (env *environ) subnetsForSpaceDiscovery(estate *environState) ([]corenetwork.SubnetInfo, error) {
-	result := []corenetwork.SubnetInfo{{
-		ProviderId:        corenetwork.Id("1"),
+func (env *environ) subnetsForSpaceDiscovery(estate *environState) ([]network.SubnetInfo, error) {
+	result := []network.SubnetInfo{{
+		ProviderId:        network.Id("1"),
 		AvailabilityZones: []string{"zone1"},
 		CIDR:              "192.168.1.0/24",
 	}, {
-		ProviderId:        corenetwork.Id("2"),
+		ProviderId:        network.Id("2"),
 		AvailabilityZones: []string{"zone1"},
 		CIDR:              "192.168.2.0/24",
 		VLANTag:           1,
 	}, {
-		ProviderId:        corenetwork.Id("3"),
+		ProviderId:        network.Id("3"),
 		AvailabilityZones: []string{"zone1"},
 		CIDR:              "192.168.3.0/24",
 	}, {
-		ProviderId:        corenetwork.Id("4"),
+		ProviderId:        network.Id("4"),
 		AvailabilityZones: []string{"zone1"},
 		CIDR:              "192.168.4.0/24",
 	}, {
-		ProviderId:        corenetwork.Id("5"),
+		ProviderId:        network.Id("5"),
 		AvailabilityZones: []string{"zone1"},
 		CIDR:              "192.168.5.0/24",
 	}}
 	estate.ops <- OpSubnets{
 		Env:        env.name,
 		InstanceId: instance.UnknownId,
-		SubnetIds:  []corenetwork.Id{},
+		SubnetIds:  []network.Id{},
 		Info:       result,
 	}
 	return result, nil
@@ -1762,7 +1763,7 @@ type dummyInstance struct {
 	controller   bool
 
 	mu        sync.Mutex
-	addresses []corenetwork.ProviderAddress
+	addresses []network.ProviderAddress
 	broken    []string
 }
 
@@ -1791,7 +1792,7 @@ func (inst *dummyInstance) Status(ctx context.ProviderCallContext) instance.Stat
 
 // SetInstanceAddresses sets the addresses associated with the given
 // dummy instance.
-func SetInstanceAddresses(inst instances.Instance, addrs []corenetwork.ProviderAddress) {
+func SetInstanceAddresses(inst instances.Instance, addrs []network.ProviderAddress) {
 	inst0 := inst.(*dummyInstance)
 	inst0.mu.Lock()
 	inst0.addresses = append(inst0.addresses[:0], addrs...)
@@ -1826,13 +1827,13 @@ func (inst *dummyInstance) checkBroken(method string) error {
 	return nil
 }
 
-func (inst *dummyInstance) Addresses(ctx context.ProviderCallContext) (corenetwork.ProviderAddresses, error) {
+func (inst *dummyInstance) Addresses(ctx context.ProviderCallContext) (network.ProviderAddresses, error) {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	if err := inst.checkBroken("Addresses"); err != nil {
 		return nil, err
 	}
-	return append([]corenetwork.ProviderAddress{}, inst.addresses...), nil
+	return append([]network.ProviderAddress{}, inst.addresses...), nil
 }
 
 func (inst *dummyInstance) OpenPorts(ctx context.ProviderCallContext, machineId string, rules firewall.IngressRules) error {
@@ -1959,17 +1960,17 @@ func delay() {
 	}
 }
 
-func (e *environ) AllocateContainerAddresses(ctx context.ProviderCallContext, hostInstanceID instance.Id, containerTag names.MachineTag, preparedInfo corenetwork.InterfaceInfos) (corenetwork.InterfaceInfos, error) {
+func (e *environ) AllocateContainerAddresses(ctx context.ProviderCallContext, hostInstanceID instance.Id, containerTag names.MachineTag, preparedInfo network.InterfaceInfos) (network.InterfaceInfos, error) {
 	return nil, errors.NotSupportedf("container address allocation")
 }
 
-func (e *environ) ReleaseContainerAddresses(ctx context.ProviderCallContext, interfaces []corenetwork.ProviderInterfaceInfo) error {
+func (e *environ) ReleaseContainerAddresses(ctx context.ProviderCallContext, interfaces []network.ProviderInterfaceInfo) error {
 	return errors.NotSupportedf("container address allocation")
 }
 
 // ProviderSpaceInfo implements NetworkingEnviron.
 func (*environ) ProviderSpaceInfo(
-	ctx context.ProviderCallContext, space *corenetwork.SpaceInfo,
+	ctx context.ProviderCallContext, space *network.SpaceInfo,
 ) (*environs.ProviderSpaceInfo, error) {
 	return nil, errors.NotSupportedf("provider space info")
 }
@@ -1996,8 +1997,8 @@ func (*environ) AssignLXDProfiles(instId string, profilesNames []string, profile
 
 // SSHAddresses implements environs.SSHAddresses.
 // For testing we cut "100.100.100.100" out of this list.
-func (*environ) SSHAddresses(ctx context.ProviderCallContext, addresses corenetwork.SpaceAddresses) (corenetwork.SpaceAddresses, error) {
-	var rv corenetwork.SpaceAddresses
+func (*environ) SSHAddresses(ctx context.ProviderCallContext, addresses network.SpaceAddresses) (network.SpaceAddresses, error) {
+	var rv network.SpaceAddresses
 	for _, addr := range addresses {
 		if addr.Value != "100.100.100.100" {
 			rv = append(rv, addr)

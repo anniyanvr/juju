@@ -8,12 +8,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/juju/bundlechanges/v5"
 	"github.com/juju/charm/v9"
 	"github.com/juju/errors"
 	"github.com/juju/names/v4"
 
 	"github.com/juju/juju/apiserver/params"
+	bundlechanges "github.com/juju/juju/core/bundle/changes"
 	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/core/devices"
 	"github.com/juju/juju/core/model"
@@ -220,7 +220,7 @@ func applicationConfigValue(key string, valueMap interface{}) (interface{}, erro
 	if !found {
 		return nil, errors.Errorf("missing application config value 'source' for key %q", key)
 	}
-	if source != "user" {
+	if source == "unset" {
 		return nil, nil
 	}
 	value, found := vm["value"]

@@ -746,12 +746,12 @@ func (s *CleanupSuite) TestCleanupActions(c *gc.C) {
 	// check no cleanups
 	s.assertDoesNotNeedCleanup(c)
 
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 2)
 	c.Assert(err, jc.ErrorIsNil)
 	// Add a couple actions to the unit
-	_, err = unit.AddAction(operationID, "snapshot", nil, nil, nil)
+	_, err = s.Model.AddAction(unit, operationID, "snapshot", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = unit.AddAction(operationID, "snapshot", nil, nil, nil)
+	_, err = s.Model.AddAction(unit, operationID, "snapshot", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	// make sure unit still has actions
@@ -799,9 +799,9 @@ func (s *CleanupSuite) TestCleanupWithCompletedActions(c *gc.C) {
 		s.assertDoesNotNeedCleanup(c)
 
 		// Add a completed action to the unit.
-		operationID, err := s.Model.EnqueueOperation("a test")
+		operationID, err := s.Model.EnqueueOperation("a test", 1)
 		c.Assert(err, jc.ErrorIsNil)
-		action, err := unit.AddAction(operationID, "snapshot", nil, nil, nil)
+		action, err := s.Model.AddAction(unit, operationID, "snapshot", nil, nil, nil)
 		c.Assert(err, jc.ErrorIsNil)
 		action, err = action.Finish(state.ActionResults{
 			Status:  status,
@@ -1052,7 +1052,7 @@ func (s *CleanupSuite) TestCleanupResourceBlob(c *gc.C) {
 	res := resourcetesting.NewResource(c, nil, "mug", "wp", data).Resource
 	resources, err := s.State.Resources()
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = resources.SetResource("wp", res.Username, res.Resource, bytes.NewBufferString(data))
+	_, err = resources.SetResource("wp", res.Username, res.Resource, bytes.NewBufferString(data), state.IncrementCharmModifiedVersion)
 	c.Assert(err, jc.ErrorIsNil)
 
 	err = app.Destroy()
@@ -1077,7 +1077,7 @@ func (s *CleanupSuite) TestCleanupResourceBlobHandlesMissing(c *gc.C) {
 	res := resourcetesting.NewResource(c, nil, "mug", "wp", data).Resource
 	resources, err := s.State.Resources()
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = resources.SetResource("wp", res.Username, res.Resource, bytes.NewBufferString(data))
+	_, err = resources.SetResource("wp", res.Username, res.Resource, bytes.NewBufferString(data), state.IncrementCharmModifiedVersion)
 	c.Assert(err, jc.ErrorIsNil)
 
 	err = app.Destroy()

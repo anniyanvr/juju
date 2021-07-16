@@ -57,12 +57,19 @@ func (s *ManifoldsSuite) TestManifoldNames(c *gc.C) {
 
 		"caas-prober",
 		"probe-http-server",
+
+		"upgrader",
+		"upgrade-steps-runner",
+		"upgrade-steps-gate",
+		"upgrade-steps-flag",
+
+		"caas-unit-termination-worker",
 	}
 	keys := make([]string, 0, len(manifolds))
 	for k := range manifolds {
 		keys = append(keys, k)
 	}
-	c.Assert(expectedKeys, jc.SameContents, keys)
+	c.Assert(keys, jc.SameContents, expectedKeys)
 }
 
 func (*ManifoldsSuite) TestMigrationGuards(c *gc.C) {
@@ -77,6 +84,11 @@ func (*ManifoldsSuite) TestMigrationGuards(c *gc.C) {
 		"migration-fortress",
 		"migration-inactive-flag",
 		"migration-minion",
+
+		"upgrader",
+		"upgrade-steps-runner",
+		"upgrade-steps-gate",
+		"upgrade-steps-flag",
 	)
 	config := unit.ManifoldsConfig{}
 	manifolds := unit.Manifolds(config)
@@ -190,5 +202,34 @@ var expectedUnitManifoldsWithDependencies = map[string][]string{
 	"probe-http-server": {},
 	"caas-prober": {
 		"probe-http-server",
+	},
+
+	"upgrade-steps-flag": {
+		"upgrade-steps-gate",
+	},
+	"upgrade-steps-gate": {},
+	"upgrade-steps-runner": {
+		"agent",
+		"api-caller",
+		"api-config-watcher",
+		"upgrade-steps-gate",
+	},
+	"upgrader": {
+		"agent",
+		"api-caller",
+		"api-config-watcher",
+		"upgrade-steps-gate",
+	},
+
+	"caas-unit-termination-worker": {
+		"agent",
+		"api-caller",
+		"api-config-watcher",
+		"charm-dir",
+		"hook-retry-strategy",
+		"leadership-tracker",
+		"migration-fortress",
+		"migration-inactive-flag",
+		"uniter",
 	},
 }

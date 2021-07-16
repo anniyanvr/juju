@@ -37,10 +37,16 @@ type deployBundle struct {
 	origin            commoncharm.Origin
 	modelConstraints  constraints.Value
 
+	// The default schema to use for charms that do not specify one. The
+	// value depends on whether we are deploying to a 2.9+ or an older
+	// controller.
+	defaultCharmSchema charm.Schema
+
 	resolver             Resolver
 	authorizer           store.MacaroonGetter
 	newConsumeDetailsAPI func(url *charm.OfferURL) (ConsumeDetails, error)
 	deployResources      resourceadapters.DeployResourcesFunc
+	charmReader          CharmReader
 
 	useExistingMachines bool
 	bundleMachines      map[string]string
@@ -110,7 +116,7 @@ Please repeat the deploy command with the --trust argument if you consent to tru
 			for _, step := range d.steps {
 				s := step
 
-				charmURL, err := resolveCharmURL(applicationSpec.Charm)
+				charmURL, err := resolveCharmURL(applicationSpec.Charm, d.defaultCharmSchema)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -159,7 +165,7 @@ Please repeat the deploy command with the --trust argument if you consent to tru
 	// TODO(ericsnow) Do something with the CS macaroons that were returned?
 	// Deploying bundles does not allow the use force, it's expected that the
 	// bundle is correct and therefore the charms are also.
-	if _, err := bundleDeploy(bundleData, spec); err != nil {
+	if _, err := bundleDeploy(d.defaultCharmSchema, bundleData, spec); err != nil {
 		return errors.Annotate(err, "cannot deploy bundle")
 	}
 	return nil

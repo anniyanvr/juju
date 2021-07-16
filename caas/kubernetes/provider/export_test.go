@@ -19,7 +19,6 @@ import (
 	k8s "github.com/juju/juju/caas/kubernetes"
 	k8sspecs "github.com/juju/juju/caas/kubernetes/provider/specs"
 	"github.com/juju/juju/caas/specs"
-	"github.com/juju/juju/cloud"
 	jujucloud "github.com/juju/juju/cloud"
 	"github.com/juju/juju/cloudconfig/podcfg"
 	"github.com/juju/juju/environs"
@@ -30,9 +29,7 @@ import (
 var (
 	PrepareWorkloadSpec       = prepareWorkloadSpec
 	OperatorPod               = operatorPod
-	ExtractRegistryURL        = extractRegistryURL
-	CreateDockerConfigJSON    = createDockerConfigJSON
-	ControllerCorelation      = controllerCorelation
+	FindControllerNamespace   = findControllerNamespace
 	GetLocalMicroK8sConfig    = getLocalMicroK8sConfig
 	AttemptMicroK8sCloud      = attemptMicroK8sCloud
 	AttemptMicroK8sCredential = attemptMicroK8sCredential
@@ -115,7 +112,7 @@ func NewProvider() caas.ContainerEnvironProvider {
 func NewProviderWithFakes(
 	runner CommandRunner,
 	credentialGetter func(CommandRunner) (jujucloud.Credential, error),
-	getter func(CommandRunner) (cloud.Cloud, error),
+	getter func(CommandRunner) (jujucloud.Cloud, error),
 	brokerGetter func(environs.OpenParams) (k8s.ClusterMetadataChecker, error)) caas.ContainerEnvironProvider {
 	return kubernetesEnvironProvider{
 		environProviderCredentials: environProviderCredentials{

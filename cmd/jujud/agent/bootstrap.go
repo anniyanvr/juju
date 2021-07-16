@@ -5,6 +5,7 @@ package agent
 
 import (
 	"bytes"
+	stdcontext "context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -185,11 +186,14 @@ func (c *BootstrapCommand) Run(_ *cmd.Context) error {
 		Cloud:          cloudSpec,
 		Config:         args.ControllerModelConfig,
 	}
+
+	ctx := stdcontext.TODO()
+
 	var env environs.BootstrapEnviron
 	if isCAAS {
-		env, err = environsNewCAAS(openParams)
+		env, err = environsNewCAAS(ctx, openParams)
 	} else {
-		env, err = environsNewIAAS(openParams)
+		env, err = environsNewIAAS(ctx, openParams)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -226,7 +230,8 @@ func (c *BootstrapCommand) Run(_ *cmd.Context) error {
 				Arch:   arch.HostArch(),
 				OSType: coreos.HostOSTypeName(),
 			}
-			_, toolsErr := envtools.FindTools(env, -1, -1, streams, filter)
+			ss := simplestreams.NewSimpleStreams(simplestreams.DefaultDataSourceFactory())
+			_, toolsErr := envtools.FindTools(ss, env, -1, -1, streams, filter)
 			if toolsErr == nil {
 				logger.Infof("agent binaries are available, upgrade will occur after bootstrap")
 			}
@@ -242,7 +247,7 @@ func (c *BootstrapCommand) Run(_ *cmd.Context) error {
 		}
 	}
 
-	callCtx := context.NewCloudCallContext()
+	callCtx := context.NewCloudCallContext(stdcontext.Background())
 	// At this stage, cloud credential has not yet been stored server-side
 	// as there is no server-side. If these cloud calls will fail with
 	// invalid credential, just log it.

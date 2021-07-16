@@ -11,6 +11,7 @@ import (
 	"github.com/juju/cmd"
 	"github.com/juju/collections/set"
 	"github.com/juju/errors"
+	"github.com/juju/featureflag"
 	"github.com/juju/gnuflag"
 	"github.com/juju/names/v4"
 	"github.com/juju/version/v2"
@@ -28,6 +29,7 @@ import (
 	"github.com/juju/juju/environs/bootstrap"
 	"github.com/juju/juju/environs/config"
 	envtools "github.com/juju/juju/environs/tools"
+	"github.com/juju/juju/feature"
 	"github.com/juju/juju/jujuclient"
 	"github.com/juju/juju/tools"
 	jujuversion "github.com/juju/juju/version"
@@ -274,7 +276,10 @@ func (c *baseUpgradeCommand) initCAASVersions(
 	controllerCfg controller.Config, majorVersion int, streamsAgents tools.List,
 ) (tools.Versions, error) {
 	logger.Debugf("searching for agent images with major: %d", majorVersion)
-	imagePath := podcfg.GetJujuOCIImagePath(controllerCfg, version.Zero, 0)
+	imagePath, err := podcfg.GetJujuOCIImagePath(controllerCfg, version.Zero, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	availableTags, err := docker.ListOperatorImages(imagePath)
 	if err != nil {
 		return nil, err
@@ -296,7 +301,7 @@ func (c *baseUpgradeCommand) initCAASVersions(
 		// Only include a docker image if we've published simple streams
 		// metadata for that version.
 		vers.Build = 0
-		if streamsVersions.Size() > 0 {
+		if !featureflag.Enabled(feature.DeveloperMode) && streamsVersions.Size() > 0 {
 			if !streamsVersions.Contains(vers.String()) {
 				continue
 			}

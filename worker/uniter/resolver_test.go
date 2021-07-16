@@ -107,7 +107,7 @@ func (s *baseResolverSuite) SetUpTest(c *gc.C, modelType model.ModelType, reboot
 		StopRetryHookTimer:  func() { s.stub.AddCall("StopRetryHookTimer") },
 		ShouldRetryHooks:    true,
 		UpgradeSeries:       upgradeseries.NewResolver(logger),
-		Reboot:              reboot.NewResolver(logger, rebootDetected, modelType),
+		Reboot:              reboot.NewResolver(logger, rebootDetected),
 		Leadership:          leadership.NewResolver(logger),
 		Actions:             uniteractions.NewResolver(logger),
 		VerifyCharmProfile:  verifycharmprofile.NewResolver(logger, modelType),
@@ -190,7 +190,10 @@ func (s *iaasResolverSuite) TestUpgradeSeriesPrepareStatusChanged(c *gc.C) {
 			Started:   true,
 		},
 	}
+
 	s.remoteState.UpgradeSeriesStatus = model.UpgradeSeriesPrepareStarted
+	s.remoteState.UpgradeSeriesTarget = "focal"
+
 	op, err := s.resolver.NextOp(localState, s.remoteState, s.opFactory)
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(op.String(), gc.Equals, "run pre-series-upgrade hook")
@@ -745,6 +748,7 @@ func (s *rebootResolverSuite) TestStartHookDeferredWhenUpgradeIsInProgress(c *gc
 	for _, statusTest := range statusChecks {
 		c.Logf("triggering resolver with upgrade status: %s", statusTest.status)
 		s.remoteState.UpgradeSeriesStatus = statusTest.status
+		s.remoteState.UpgradeSeriesTarget = "focal"
 
 		op, err := s.resolver.NextOp(localState, s.remoteState, s.opFactory)
 		if statusTest.expErr != nil {

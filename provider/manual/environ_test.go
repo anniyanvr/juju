@@ -4,6 +4,7 @@
 package manual
 
 import (
+	stdcontext "context"
 	"os"
 
 	"github.com/juju/errors"
@@ -29,13 +30,13 @@ type baseEnvironSuite struct {
 
 func (s *baseEnvironSuite) SetUpTest(c *gc.C) {
 	s.FakeJujuXDGDataHomeSuite.SetUpTest(c)
-	env, err := ManualProvider{}.Open(environs.OpenParams{
+	env, err := ManualProvider{}.Open(stdcontext.TODO(), environs.OpenParams{
 		Cloud:  CloudSpec(),
 		Config: MinimalConfig(c),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 	s.env = env.(*manualEnviron)
-	s.callCtx = context.NewCloudCallContext()
+	s.callCtx = context.NewEmptyCloudCallContext()
 }
 
 type environSuite struct {

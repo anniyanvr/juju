@@ -63,7 +63,7 @@ func (s *credentialsSuite) TestServicePrincipalSecretHiddenAttributes(c *gc.C) {
 }
 
 func (s *credentialsSuite) TestDetectCredentialsNoAccounts(c *gc.C) {
-	_, err := s.provider.DetectCredentials()
+	_, err := s.provider.DetectCredentials("")
 	c.Assert(err, jc.Satisfies, errors.IsNotFound)
 	calls := s.azureCLI.Calls()
 	c.Assert(calls, gc.HasLen, 1)
@@ -72,7 +72,7 @@ func (s *credentialsSuite) TestDetectCredentialsNoAccounts(c *gc.C) {
 
 func (s *credentialsSuite) TestDetectCredentialsListError(c *gc.C) {
 	s.azureCLI.SetErrors(errors.New("test error"))
-	_, err := s.provider.DetectCredentials()
+	_, err := s.provider.DetectCredentials("")
 	c.Assert(err, jc.Satisfies, errors.IsNotFound)
 }
 
@@ -93,7 +93,7 @@ func (s *credentialsSuite) TestDetectCredentialsOneAccount(c *gc.C) {
 		IsActive: true,
 		Name:     "AzureCloud",
 	}}
-	cred, err := s.provider.DetectCredentials()
+	cred, err := s.provider.DetectCredentials("")
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(cred, gc.Not(gc.IsNil))
 	c.Assert(cred.DefaultCredential, gc.Equals, "test-account")
@@ -149,7 +149,7 @@ func (s *credentialsSuite) TestDetectCredentialsCloudError(c *gc.C) {
 		Name:     "AzureCloud",
 	}}
 	s.azureCLI.SetErrors(nil, errors.New("test error"))
-	cred, err := s.provider.DetectCredentials()
+	cred, err := s.provider.DetectCredentials("")
 	c.Assert(err, jc.Satisfies, errors.IsNotFound)
 	c.Assert(cred, gc.IsNil)
 
@@ -186,7 +186,7 @@ func (s *credentialsSuite) TestDetectCredentialsTwoAccounts(c *gc.C) {
 		IsActive: true,
 		Name:     "AzureCloud",
 	}}
-	cred, err := s.provider.DetectCredentials()
+	cred, err := s.provider.DetectCredentials("")
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(cred, gc.Not(gc.IsNil))
 	c.Assert(cred.DefaultCredential, gc.Equals, "test-account1")
@@ -271,7 +271,7 @@ func (s *credentialsSuite) TestDetectCredentialsTwoAccountsOneError(c *gc.C) {
 		Name:     "AzureCloud",
 	}}
 	s.azureCLI.SetErrors(nil, nil, nil, nil, errors.New("test error"))
-	cred, err := s.provider.DetectCredentials()
+	cred, err := s.provider.DetectCredentials("")
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(cred, gc.Not(gc.IsNil))
 	c.Assert(cred.DefaultCredential, gc.Equals, "")
@@ -324,9 +324,10 @@ func (s *credentialsSuite) TestFinalizeCredentialInteractive(c *gc.C) {
 	c.Assert(out, gc.NotNil)
 	c.Assert(out.AuthType(), gc.Equals, cloud.AuthType("service-principal-secret"))
 	c.Assert(out.Attributes(), jc.DeepEquals, map[string]string{
-		"application-id":       "appid",
-		"application-password": "service-principal-password",
-		"subscription-id":      "subscription",
+		"application-id":        "appid",
+		"application-password":  "service-principal-password",
+		"application-object-id": "application-object-id",
+		"subscription-id":       "subscription",
 	})
 
 	s.servicePrincipalCreator.CheckCallNames(c, "InteractiveCreate")
@@ -390,6 +391,7 @@ func (s *credentialsSuite) TestFinalizeCredentialAzureCLI(c *gc.C) {
 	c.Assert(attrs["subscription-id"], gc.Equals, "test-account1-id")
 	c.Assert(attrs["application-id"], gc.Equals, "appid")
 	c.Assert(attrs["application-password"], gc.Equals, "service-principal-password")
+	c.Assert(attrs["application-object-id"], gc.Equals, "application-object-id")
 }
 
 func (s *credentialsSuite) TestFinalizeCredentialAzureCLIShowAccountError(c *gc.C) {
@@ -575,6 +577,7 @@ func (s *credentialsSuite) TestFinalizeCredentialAzureCLIDeviceFallback(c *gc.C)
 	c.Assert(attrs["subscription-id"], gc.Equals, "test-account1-id")
 	c.Assert(attrs["application-id"], gc.Equals, "appid")
 	c.Assert(attrs["application-password"], gc.Equals, "service-principal-password")
+	c.Assert(attrs["application-object-id"], gc.Equals, "application-object-id")
 	s.servicePrincipalCreator.CheckCallNames(c, "InteractiveCreate")
 }
 
@@ -582,14 +585,14 @@ type servicePrincipalCreator struct {
 	testing.Stub
 }
 
-func (c *servicePrincipalCreator) InteractiveCreate(sdkCtx context.Context, stderr io.Writer, params azureauth.ServicePrincipalParams) (appId, password string, _ error) {
+func (c *servicePrincipalCreator) InteractiveCreate(sdkCtx context.Context, stderr io.Writer, params azureauth.ServicePrincipalParams) (appId, spId, password string, _ error) {
 	c.MethodCall(c, "InteractiveCreate", sdkCtx, stderr, params)
-	return "appid", "service-principal-password", c.NextErr()
+	return "appid", "application-object-id", "service-principal-password", c.NextErr()
 }
 
-func (c *servicePrincipalCreator) Create(sdkCtx context.Context, params azureauth.ServicePrincipalParams) (appId, password string, _ error) {
+func (c *servicePrincipalCreator) Create(sdkCtx context.Context, params azureauth.ServicePrincipalParams) (appId, spId, password string, _ error) {
 	c.MethodCall(c, "Create", sdkCtx, params)
-	return "appid", "service-principal-password", c.NextErr()
+	return "appid", "application-object-id", "service-principal-password", c.NextErr()
 }
 
 type azureCLI struct {

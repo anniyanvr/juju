@@ -42,6 +42,11 @@ func (r *Role) Clone() Resource {
 	return &clone
 }
 
+// ID returns a comparable ID for the Resource
+func (r *Role) ID() ID {
+	return ID{"Role", r.Name, r.Namespace}
+}
+
 // Apply patches the resource change.
 func (r *Role) Apply(ctx context.Context, client kubernetes.Interface) error {
 	api := client.RbacV1().Roles(r.Namespace)
@@ -93,7 +98,7 @@ func (r *Role) Delete(ctx context.Context, client kubernetes.Interface) error {
 
 // Events emitted by the resource.
 func (r *Role) Events(ctx context.Context, client kubernetes.Interface) ([]corev1.Event, error) {
-	return ListEventsForObject(ctx, client, r.Namespace, r.Name, "ServiceAccount")
+	return ListEventsForObject(ctx, client, r.Namespace, r.Name, "Role")
 }
 
 // ComputeStatus returns a juju status for the resource.

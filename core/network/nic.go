@@ -10,18 +10,6 @@ import (
 	"github.com/juju/errors"
 )
 
-// InterfaceType defines valid network interface types.
-type InterfaceType string
-
-const (
-	UnknownInterface    InterfaceType = ""
-	LoopbackInterface   InterfaceType = "loopback"
-	EthernetInterface   InterfaceType = "ethernet"
-	VLAN_8021QInterface InterfaceType = "802.1q"
-	BondInterface       InterfaceType = "bond"
-	BridgeInterface     InterfaceType = "bridge"
-)
-
 // VirtualPortType defines the list of known port types for virtual NICs.
 type VirtualPortType string
 
@@ -71,8 +59,17 @@ func (r Route) Validate() error {
 	return nil
 }
 
-// InterfaceInfo describes a single network interface available on an
-// instance.
+// InterfaceInfo describes a single network interface.
+//
+// A note on ConfigType stored against the interface, and on members of the
+// Addresses collection:
+// Addresses detected for machines during discovery (on-machine or via the
+// instance-poller) are denormalised for storage in that the configuration
+// method (generally associated with the device) is stored for each address.
+// So when incoming, ConfigType supplied with *addresses* is prioritised.
+// Alternatively, when supplied to instance provisioning as network
+// configuration for cloud-init, we are informing how a *device* should be
+// configured for addresses and so we use the ConfigType against the interface.
 type InterfaceInfo struct {
 	// DeviceIndex specifies the order in which the network interface
 	// appears on the host. The primary interface has an index of 0.
@@ -121,7 +118,7 @@ type InterfaceInfo struct {
 	ParentInterfaceName string
 
 	// InterfaceType is the type of the interface.
-	InterfaceType InterfaceType
+	InterfaceType LinkLayerDeviceType
 
 	// Disabled is true when the interface needs to be disabled on the
 	// machine, e.g. not to configure it.

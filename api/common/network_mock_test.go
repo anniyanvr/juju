@@ -204,10 +204,10 @@ func (mr *MockConfigSourceNICMockRecorder) Name() *gomock.Call {
 }
 
 // Type mocks base method
-func (m *MockConfigSourceNIC) Type() network.InterfaceType {
+func (m *MockConfigSourceNIC) Type() network.LinkLayerDeviceType {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Type")
-	ret0, _ := ret[0].(network.InterfaceType)
+	ret0, _ := ret[0].(network.LinkLayerDeviceType)
 	return ret0
 }
 
@@ -266,6 +266,20 @@ func (m *MockConfigSourceAddr) IPNet() *net.IPNet {
 func (mr *MockConfigSourceAddrMockRecorder) IPNet() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IPNet", reflect.TypeOf((*MockConfigSourceAddr)(nil).IPNet))
+}
+
+// IsSecondary mocks base method
+func (m *MockConfigSourceAddr) IsSecondary() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSecondary")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsSecondary indicates an expected call of IsSecondary
+func (mr *MockConfigSourceAddrMockRecorder) IsSecondary() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSecondary", reflect.TypeOf((*MockConfigSourceAddr)(nil).IsSecondary))
 }
 
 // String mocks base method

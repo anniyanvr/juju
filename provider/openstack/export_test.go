@@ -6,10 +6,10 @@ package openstack
 import (
 	"regexp"
 
+	"github.com/go-goose/goose/v4/neutron"
+	"github.com/go-goose/goose/v4/nova"
+	"github.com/go-goose/goose/v4/swift"
 	"github.com/juju/collections/set"
-	"gopkg.in/goose.v2/neutron"
-	"gopkg.in/goose.v2/nova"
-	"gopkg.in/goose.v2/swift"
 
 	"github.com/juju/juju/core/instance"
 	"github.com/juju/juju/environs"

@@ -281,19 +281,19 @@ func (c *upgradeSeriesCommand) retrieveUnits() ([]string, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var units []string
-	machine, ok := fullStatus.Machines[c.machineNumber]
-	if !ok {
-		return nil, errors.NotFoundf("machine %q", c.machineNumber)
+	machineID, err := getMachineID(fullStatus, c.machineNumber)
+	if err != nil {
+		return nil, errors.Annotatef(err, "unable to locate instance")
 	}
+	var units []string
 	for _, application := range fullStatus.Applications {
 		for name, unit := range application.Units {
-			if unit.Machine == machine.Id {
+			if unit.Machine == machineID {
 				units = append(units, name)
 			}
 			for subName, subordinate := range unit.Subordinates {
-				if subordinate.Machine != "" && subordinate.Machine != machine.Id {
-					return nil, errors.Errorf("subordinate %q machine has unexpected machine id %s", subName, machine.Id)
+				if subordinate.Machine != "" && subordinate.Machine != machineID {
+					return nil, errors.Errorf("subordinate %q machine has unexpected instance id %s", subName, machineID)
 				}
 				units = append(units, subName)
 			}
@@ -305,11 +305,31 @@ func (c *upgradeSeriesCommand) retrieveUnits() ([]string, error) {
 	return units, nil
 }
 
+func getMachineID(fullStatus *params.FullStatus, id string) (string, error) {
+	if machine, ok := fullStatus.Machines[id]; ok {
+		return machine.Id, nil
+	}
+	for _, machine := range fullStatus.Machines {
+		if container, ok := machine.Containers[id]; ok {
+			return container.Id, nil
+		}
+	}
+	return "", errors.NotFoundf("instance %q", id)
+}
+
 // Display any progress information from the error. If there isn't any info
 // or the info was malformed, we will fall back to the underlying error
 // and not provide any hints.
 func (c *upgradeSeriesCommand) displayProgressFromError(ctx *cmd.Context, err error) error {
-	errResp := errors.Cause(err).(*params.Error)
+	if errors.IsNotSupported(err) {
+		return errors.Wrap(err, errors.Errorf(`upgrade-series is not supported.
+Please upgrade your controller to perform the operation.`))
+	}
+
+	errResp, ok := errors.Cause(err).(*params.Error)
+	if !ok {
+		return errors.Trace(err)
+	}
 	var info params.UpgradeSeriesValidationErrorInfo
 	if unmarshalErr := errResp.UnmarshalInfo(&info); unmarshalErr == nil && info.Status != "" {
 		// Lift the raw status into a upgrade series status type. Then perform

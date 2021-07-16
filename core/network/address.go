@@ -45,6 +45,20 @@ const (
 	ConfigLoopback AddressConfigType = "loopback"
 )
 
+// IsValidAddressConfigType returns whether the given value is a valid
+// method to configure a link-layer network device's IP address.
+// TODO (manadart 2021-05-04): There is an issue with the usage of this
+// method in state where we have denormalised the config method so it is
+// against device addresses. This is because "manual" indicates a device that
+// has no configuration by default. This could never apply to an address.
+func IsValidAddressConfigType(value string) bool {
+	switch AddressConfigType(value) {
+	case ConfigLoopback, ConfigStatic, ConfigDHCP, ConfigManual:
+		return true
+	}
+	return false
+}
+
 // AddressType represents the possible ways of specifying a machine location by
 // either a hostname resolvable by dns lookup, or IPv4 or IPv6 address.
 type AddressType string
@@ -843,6 +857,52 @@ func NetworkCIDRFromIPAndMask(ip net.IP, netmask net.IPMask) string {
 
 	hostBits, _ := netmask.Size()
 	return fmt.Sprintf("%s/%d", ip.Mask(netmask), hostBits)
+}
+
+// SpaceAddressCandidate describes property methods required
+// for conversion to sortable space addresses.
+type SpaceAddressCandidate interface {
+	Value() string
+	ConfigMethod() AddressConfigType
+	SubnetCIDR() string
+	IsSecondary() bool
+}
+
+// ConvertToSpaceAddress returns a SpaceAddress representing the
+// input candidate address, by using the input subnet lookup to
+// associate the address with a space..
+func ConvertToSpaceAddress(addr SpaceAddressCandidate, lookup SubnetLookup) (SpaceAddress, error) {
+	subnets, err := lookup.AllSubnetInfos()
+	if err != nil {
+		return SpaceAddress{}, errors.Trace(err)
+	}
+
+	cidr := addr.SubnetCIDR()
+
+	spaceAddr := SpaceAddress{
+		MachineAddress: NewMachineAddress(
+			addr.Value(),
+			WithCIDR(cidr),
+			WithConfigType(addr.ConfigMethod()),
+			WithSecondary(addr.IsSecondary()),
+		),
+	}
+
+	// If this is not a loopback device, attempt to
+	// set the space ID based on the subnet.
+	if addr.ConfigMethod() != ConfigLoopback && cidr != "" {
+		allMatching, err := subnets.GetByCIDR(cidr)
+		if err != nil {
+			return SpaceAddress{}, errors.Trace(err)
+		}
+
+		// This only holds true while CIDRs uniquely identify subnets.
+		if len(allMatching) != 0 {
+			spaceAddr.SpaceID = allMatching[0].SpaceID
+		}
+	}
+
+	return spaceAddr, nil
 }
 
 // noAddress represents an error when an address is requested but not available.

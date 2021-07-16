@@ -237,9 +237,9 @@ func (s *FactorySuite) TestNewActionRunnerGood(c *gc.C) {
 		},
 	} {
 		c.Logf("test %d", i)
-		operationID, err := s.model.EnqueueOperation("a test")
+		operationID, err := s.model.EnqueueOperation("a test", 1)
 		c.Assert(err, jc.ErrorIsNil)
-		action, err := s.model.EnqueueAction(operationID, s.unit.Tag(), test.actionName, test.payload, true, "group")
+		action, err := s.model.EnqueueAction(operationID, s.unit.Tag(), test.actionName, test.payload, true, "group", nil)
 		c.Assert(err, jc.ErrorIsNil)
 		uniterAction := uniter.NewAction(
 			action.Id(),
@@ -260,15 +260,23 @@ func (s *FactorySuite) TestNewActionRunnerGood(c *gc.C) {
 			Params:     test.payload,
 			ResultsMap: map[string]interface{}{},
 		})
-		vars, err := ctx.HookVars(s.paths, false, func(k string) string {
-			switch k {
-			case "PATH", "Path":
-				return "pathy"
-			default:
-				c.Errorf("unexpected get env call for %q", k)
-			}
-			return ""
-		})
+		vars, err := ctx.HookVars(s.paths, false, context.NewRemoteEnvironmenter(
+			func() []string { return []string{} },
+			func(k string) string {
+				switch k {
+				case "PATH", "Path":
+					return "pathy"
+				}
+				return ""
+			},
+			func(k string) (string, bool) {
+				switch k {
+				case "PATH", "Path":
+					return "pathy", true
+				}
+				return "", false
+			},
+		))
 		c.Assert(err, jc.ErrorIsNil)
 		c.Assert(len(vars) > 0, jc.IsTrue, gc.Commentf("expected HookVars but found none"))
 		combined := strings.Join(vars, "|")
@@ -305,9 +313,9 @@ func (s *FactorySuite) TestNewActionRunnerWithCancel(c *gc.C) {
 		"outfile": "/some/file.bz2",
 	}
 	cancel := make(chan struct{})
-	operationID, err := s.model.EnqueueOperation("a test")
+	operationID, err := s.model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := s.model.EnqueueAction(operationID, s.unit.Tag(), actionName, payload, true, "group")
+	action, err := s.model.EnqueueAction(operationID, s.unit.Tag(), actionName, payload, true, "group", nil)
 	c.Assert(err, jc.ErrorIsNil)
 	uniterAction := uniter.NewAction(
 		action.Id(),
@@ -329,15 +337,23 @@ func (s *FactorySuite) TestNewActionRunnerWithCancel(c *gc.C) {
 		ResultsMap: map[string]interface{}{},
 		Cancel:     cancel,
 	})
-	vars, err := ctx.HookVars(s.paths, false, func(k string) string {
-		switch k {
-		case "PATH", "Path":
-			return "pathy"
-		default:
-			c.Errorf("unexpected get env call for %q", k)
-		}
-		return ""
-	})
+	vars, err := ctx.HookVars(s.paths, false, context.NewRemoteEnvironmenter(
+		func() []string { return []string{} },
+		func(k string) string {
+			switch k {
+			case "PATH", "Path":
+				return "pathy"
+			}
+			return ""
+		},
+		func(k string) (string, bool) {
+			switch k {
+			case "PATH", "Path":
+				return "pathy", true
+			}
+			return "", false
+		},
+	))
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(len(vars) > 0, jc.IsTrue, gc.Commentf("expected HookVars but found none"))
 	combined := strings.Join(vars, "|")

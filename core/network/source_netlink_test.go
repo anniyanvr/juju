@@ -11,6 +11,7 @@ import (
 	"github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	gc "gopkg.in/check.v1"
 )
 
@@ -40,6 +41,11 @@ func (s *sourceNetlinkSuite) TestNetlinkAddr(c *gc.C) {
 	c.Check(addr.IP().String(), gc.Equals, "fe80::5054:ff:fedd:eef0")
 	c.Assert(addr.IPNet(), gc.NotNil)
 	c.Check(addr.IPNet().String(), gc.Equals, "fe80::5054:ff:fedd:eef0/64")
+
+	c.Check(addr.IsSecondary(), jc.IsFalse)
+
+	addr.addr.Flags = addr.addr.Flags | unix.IFA_F_SECONDARY
+	c.Check(addr.IsSecondary(), jc.IsTrue)
 }
 
 func (s *sourceNetlinkSuite) TestNetlinkAttrs(c *gc.C) {
@@ -59,16 +65,16 @@ func (s *sourceNetlinkSuite) TestNetlinkNICType(c *gc.C) {
 
 	// If we have get value, return it.
 	link.linkType = "bond"
-	c.Check(nic.Type(), gc.Equals, BondInterface)
+	c.Check(nic.Type(), gc.Equals, BondDevice)
 
 	// Infer loopback from flags.
 	link.linkType = ""
 	link.flags = net.FlagUp | net.FlagLoopback
-	c.Check(nic.Type(), gc.Equals, LoopbackInterface)
+	c.Check(nic.Type(), gc.Equals, LoopbackDevice)
 
 	// Default to ethernet otherwise.
 	link.flags = net.FlagUp | net.FlagBroadcast | net.FlagMulticast
-	c.Check(nic.Type(), gc.Equals, EthernetInterface)
+	c.Check(nic.Type(), gc.Equals, EthernetDevice)
 }
 
 func (s *sourceNetlinkSuite) TestNetlinkNICAddrs(c *gc.C) {
@@ -109,8 +115,8 @@ func (s *sourceNetlinkSuite) TestNetlinkSourceInterfaces(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 
 	c.Assert(nics, gc.HasLen, 2)
-	c.Check(nics[0].Type(), gc.Equals, BridgeInterface)
-	c.Check(nics[1].Type(), gc.Equals, BondInterface)
+	c.Check(nics[0].Type(), gc.Equals, BridgeDevice)
+	c.Check(nics[1].Type(), gc.Equals, BondDevice)
 }
 
 // stubLink stubs netlink.Link

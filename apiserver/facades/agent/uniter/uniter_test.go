@@ -4,6 +4,7 @@
 package uniter_test
 
 import (
+	stdcontext "context"
 	"fmt"
 	"time"
 
@@ -210,7 +211,7 @@ func (s *uniterSuiteBase) setupCAASModel(c *gc.C) (*apiuniter.State, *state.CAAS
 	c.Assert(err, jc.ErrorIsNil)
 
 	apiInfo, err := environs.APIInfo(
-		context.NewCloudCallContext(),
+		context.NewEmptyCloudCallContext(),
 		s.ControllerConfig.ControllerUUID(),
 		st.ModelUUID(),
 		coretesting.CACert,
@@ -1158,15 +1159,15 @@ func (s *uniterSuite) TestWatchTrustConfigSettingsHash(c *gc.C) {
 }
 
 func (s *uniterSuite) TestLogActionMessage(c *gc.C) {
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	anAction, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	anAction, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(anAction.Messages(), gc.HasLen, 0)
 	_, err = anAction.Begin()
 	c.Assert(err, jc.ErrorIsNil)
 
-	wrongAction, err := s.mysqlUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	wrongAction, err := s.Model.AddAction(s.mysqlUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	args := params.ActionMessageParams{Messages: []params.EntityString{
@@ -1192,9 +1193,9 @@ func (s *uniterSuite) TestLogActionMessage(c *gc.C) {
 }
 
 func (s *uniterSuite) TestLogActionMessageAborting(c *gc.C) {
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	anAction, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	anAction, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(anAction.Messages(), gc.HasLen, 0)
 	_, err = anAction.Begin()
@@ -1252,9 +1253,9 @@ func (s *uniterSuite) TestWatchActionNotifications(c *gc.C) {
 	wc := statetesting.NewStringsWatcherC(c, s.State, resource.(state.StringsWatcher))
 	wc.AssertNoChange()
 
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	addedAction, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	addedAction, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	wc.AssertChange(addedAction.Id())
@@ -1275,11 +1276,11 @@ func (s *uniterSuite) TestWatchPreexistingActions(c *gc.C) {
 
 	c.Assert(s.resources.Count(), gc.Equals, 0)
 
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action1, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	action1, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
-	action2, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	action2, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	args := params.Entities{Entities: []params.Entity{
@@ -1302,7 +1303,7 @@ func (s *uniterSuite) TestWatchPreexistingActions(c *gc.C) {
 	wc := statetesting.NewStringsWatcherC(c, s.State, resource.(state.StringsWatcher))
 	wc.AssertNoChange()
 
-	addedAction, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	addedAction, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	wc.AssertChange(addedAction.Id())
 	wc.AssertNoChange()
@@ -1335,9 +1336,9 @@ func (s *uniterSuite) TestWatchActionNotificationsMalformedUnitName(c *gc.C) {
 }
 
 func (s *uniterSuite) TestWatchActionNotificationsNotUnit(c *gc.C) {
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := s.mysqlUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	action, err := s.Model.AddAction(s.mysqlUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	args := params.Entities{Entities: []params.Entity{
 		{Tag: action.Tag().String()},
@@ -1716,9 +1717,9 @@ func (s *uniterSuite) TestActions(c *gc.C) {
 	for i, actionTest := range actionTests {
 		c.Logf("test %d: %s", i, actionTest.description)
 
-		operationID, err := s.Model.EnqueueOperation("a test")
+		operationID, err := s.Model.EnqueueOperation("a test", 1)
 		c.Assert(err, jc.ErrorIsNil)
-		a, err := s.wordpressUnit.AddAction(
+		a, err := s.Model.AddAction(s.wordpressUnit,
 			operationID,
 			actionTest.action.Action.Name,
 			actionTest.action.Action.Parameters, &parallel, &executionGroup)
@@ -1766,9 +1767,9 @@ func (s *uniterSuite) TestActionsWrongUnit(c *gc.C) {
 	}
 	mysqlUnitFacade := s.newUniterAPI(c, s.State, mysqlUnitAuthorizer)
 
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	action, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	args := params.Entities{
 		Entities: []params.Entity{{
@@ -1782,9 +1783,9 @@ func (s *uniterSuite) TestActionsWrongUnit(c *gc.C) {
 }
 
 func (s *uniterSuite) TestActionsPermissionDenied(c *gc.C) {
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := s.mysqlUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	action, err := s.Model.AddAction(s.mysqlUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	args := params.Entities{
 		Entities: []params.Entity{{
@@ -1805,9 +1806,9 @@ func (s *uniterSuite) TestFinishActionsSuccess(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(results, gc.DeepEquals, ([]state.Action)(nil))
 
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := s.wordpressUnit.AddAction(operationID, testName, nil, nil, nil)
+	action, err := s.Model.AddAction(s.wordpressUnit, operationID, testName, nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	actionResults := params.ActionExecutionResults{
@@ -1839,9 +1840,9 @@ func (s *uniterSuite) TestFinishActionsFailure(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(results, gc.DeepEquals, ([]state.Action)(nil))
 
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := s.wordpressUnit.AddAction(operationID, testName, nil, nil, nil)
+	action, err := s.Model.AddAction(s.wordpressUnit, operationID, testName, nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	actionResults := params.ActionExecutionResults{
@@ -1867,12 +1868,12 @@ func (s *uniterSuite) TestFinishActionsFailure(c *gc.C) {
 }
 
 func (s *uniterSuite) TestFinishActionsAuthAccess(c *gc.C) {
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 2)
 	c.Assert(err, jc.ErrorIsNil)
-	good, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	good, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
-	bad, err := s.mysqlUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	bad, err := s.Model.AddAction(s.mysqlUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	var tests = []struct {
@@ -1911,9 +1912,9 @@ func (s *uniterSuite) TestFinishActionsAuthAccess(c *gc.C) {
 
 func (s *uniterSuite) TestBeginActions(c *gc.C) {
 	ten_seconds_ago := time.Now().Add(-10 * time.Second)
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	good, err := s.wordpressUnit.AddAction(operationID, "fakeaction", nil, nil, nil)
+	good, err := s.Model.AddAction(s.wordpressUnit, operationID, "fakeaction", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	running, err := s.wordpressUnit.RunningActions()
@@ -4120,7 +4121,7 @@ func (s *uniterNetworkInfoSuite) SetUpTest(c *gc.C) {
 	s.PatchValue(&provider.NewK8sClients, k8stesting.NoopFakeK8sClients)
 
 	net := map[string][]string{
-		"public":     {"8.8.0.0/16", "1.0.0.0/12"},
+		"public":     {"8.8.0.0/16", "240.0.0.0/12"},
 		"internal":   {"10.0.0.0/24"},
 		"wp-default": {"100.64.0.0/16"},
 		"database":   {"192.168.1.0/24"},
@@ -4203,7 +4204,7 @@ func (s *uniterNetworkInfoSuite) addProvisionedMachineWithDevicesAndAddresses(c 
 	c.Assert(machine.SetLinkLayerDevices(devicesArgs...), jc.ErrorIsNil)
 	c.Assert(machine.SetDevicesAddresses(devicesAddrs...), jc.ErrorIsNil)
 
-	machineAddrs, err := machine.AllAddresses()
+	machineAddrs, err := machine.AllDeviceAddresses()
 	c.Assert(err, jc.ErrorIsNil)
 
 	netAddrs := make([]network.SpaceAddress, len(machineAddrs))
@@ -4254,36 +4255,36 @@ func (s *uniterNetworkInfoSuite) makeMachineDevicesAndAddressesArgs(addrSuffix i
 		}},
 		[]state.LinkLayerDeviceAddress{{
 			DeviceName:   "eth0",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("8.8.8.%d/16", addrSuffix),
 		}, {
 			DeviceName:   "eth0.100",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("10.0.0.%d/24", addrSuffix),
 		}, {
 			DeviceName:   "eth1",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("8.8.4.%d/16", addrSuffix),
 		}, {
 			DeviceName:   "eth1",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("8.8.4.%d/16", addrSuffix+1),
 		}, {
 			DeviceName:   "eth1.100",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("10.0.0.%d/24", addrSuffix+1),
 		}, {
 			DeviceName:   "eth2",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("100.64.0.%d/16", addrSuffix),
 		}, {
 			DeviceName:   "eth4",
-			ConfigMethod: network.StaticAddress,
+			ConfigMethod: network.ConfigStatic,
 			CIDRAddress:  fmt.Sprintf("192.168.1.%d/24", addrSuffix),
 		}, {
 			DeviceName:   "fan-1",
-			ConfigMethod: network.StaticAddress,
-			CIDRAddress:  fmt.Sprintf("1.1.1.%d/12", addrSuffix),
+			ConfigMethod: network.ConfigStatic,
+			CIDRAddress:  fmt.Sprintf("240.1.1.%d/12", addrSuffix),
 		}}
 }
 
@@ -4396,13 +4397,6 @@ func (s *uniterNetworkInfoSuite) TestNetworkInfoForExplicitlyBoundEndpointAndDef
 	expectedConfigWithExtraBindingName := params.NetworkInfoResult{
 		Info: []params.NetworkInfo{
 			{
-				MACAddress:    "00:11:22:33:10:50",
-				InterfaceName: "eth0",
-				Addresses: []params.InterfaceAddress{
-					{Address: "8.8.8.10", CIDR: "8.8.0.0/16"},
-				},
-			},
-			{
 				MACAddress:    "00:11:22:33:10:51",
 				InterfaceName: "eth1",
 				Addresses: []params.InterfaceAddress{
@@ -4411,17 +4405,24 @@ func (s *uniterNetworkInfoSuite) TestNetworkInfoForExplicitlyBoundEndpointAndDef
 				},
 			},
 			{
+				MACAddress:    "00:11:22:33:10:50",
+				InterfaceName: "eth0",
+				Addresses: []params.InterfaceAddress{
+					{Address: "8.8.8.10", CIDR: "8.8.0.0/16"},
+				},
+			},
+			{
 				MACAddress:    "00:11:22:33:10:55",
 				InterfaceName: "fan-1",
 				Addresses: []params.InterfaceAddress{
-					{Address: "1.1.1.10", CIDR: "1.0.0.0/12"},
+					{Address: "240.1.1.10", CIDR: "240.0.0.0/12"},
 				},
 			},
 		},
 		// Egress is based on the first ingress address.
 		// Addresses are sorted, with fan always last.
 		EgressSubnets:    []string{"8.8.4.10/32"},
-		IngressAddresses: []string{"8.8.4.10", "8.8.4.11", "8.8.8.10", "1.1.1.10"},
+		IngressAddresses: []string{"8.8.4.10", "8.8.4.11", "8.8.8.10", "240.1.1.10"},
 	}
 
 	// For the "db-client" extra-binding we expect to see interfaces from default
@@ -5163,7 +5164,7 @@ func (s *cloudSpecUniterSuite) TestCloudAPIVersion(c *gc.C) {
 	_, cm, _, _ := s.setupCAASModel(c)
 
 	uniterAPI := s.newUniterAPI(c, cm.State(), s.authorizer)
-	uniter.SetNewContainerBrokerFunc(uniterAPI, func(environs.OpenParams) (caas.Broker, error) {
+	uniter.SetNewContainerBrokerFunc(uniterAPI, func(stdcontext.Context, environs.OpenParams) (caas.Broker, error) {
 		return &fakeBroker{}, nil
 	})
 

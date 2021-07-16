@@ -426,6 +426,9 @@
                         "error": {
                             "$ref": "#/definitions/Error"
                         },
+                        "fail": {
+                            "type": "string"
+                        },
                         "operation": {
                             "type": "string"
                         },
@@ -705,6 +708,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -788,6 +794,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -940,8 +949,8 @@
     },
     {
         "Name": "Agent",
-        "Description": "AgentAPIV2 implements the version 2 of the API provided to an agent.",
-        "Version": 2,
+        "Description": "AgentAPIV3 implements the version 3 of the API provided to an agent.",
+        "Version": 3,
         "AvailableTo": [
             "controller-machine-agent",
             "machine-agent",
@@ -5503,8 +5512,8 @@
     },
     {
         "Name": "Bundle",
-        "Description": "APIv4 provides the Bundle API facade for version 4. It is otherwise\nidentical to V3 with the exception that the V4 now has GetChangesAsMap, which\nreturns the same data as GetChanges, but with better args data.",
-        "Version": 4,
+        "Description": "APIv5 provides the Bundle API facade for version 5. It is otherwise\nidentical to V4 with the exception that the V5 adds an arg to export\nbundle to control what is exported..",
+        "Version": 5,
         "AvailableTo": [
             "controller-user",
             "model-user"
@@ -5515,6 +5524,9 @@
                 "ExportBundle": {
                     "type": "object",
                     "properties": {
+                        "Params": {
+                            "$ref": "#/definitions/ExportBundleParams"
+                        },
                         "Result": {
                             "$ref": "#/definitions/StringResult"
                         }
@@ -5688,6 +5700,15 @@
                         "code"
                     ]
                 },
+                "ExportBundleParams": {
+                    "type": "object",
+                    "properties": {
+                        "include-charm-defaults": {
+                            "type": "boolean"
+                        }
+                    },
+                    "additionalProperties": false
+                },
                 "StringResult": {
                     "type": "object",
                     "properties": {
@@ -5852,8 +5873,8 @@
     },
     {
         "Name": "CAASAgent",
-        "Description": "",
-        "Version": 1,
+        "Description": "FacadeV2 is the V2 facade of the caas agent",
+        "Version": 2,
         "AvailableTo": [
             "controller-machine-agent",
             "machine-agent",
@@ -6219,6 +6240,18 @@
                         }
                     },
                     "description": "UnitIntroduction sets the status of each given entity."
+                },
+                "UnitTerminating": {
+                    "type": "object",
+                    "properties": {
+                        "Params": {
+                            "$ref": "#/definitions/Entity"
+                        },
+                        "Result": {
+                            "$ref": "#/definitions/CAASUnitTerminationResult"
+                        }
+                    },
+                    "description": "UnitTerminating should be called by the CAASUnitTerminationWorker when\nthe agent receives a signal to exit. UnitTerminating will return how\nthe agent should shutdown."
                 }
             },
             "definitions": {
@@ -6268,6 +6301,34 @@
                         }
                     },
                     "additionalProperties": false
+                },
+                "CAASUnitTerminationResult": {
+                    "type": "object",
+                    "properties": {
+                        "Error": {
+                            "$ref": "#/definitions/Error"
+                        },
+                        "WillRestart": {
+                            "type": "boolean"
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                        "WillRestart",
+                        "Error"
+                    ]
+                },
+                "Entity": {
+                    "type": "object",
+                    "properties": {
+                        "tag": {
+                            "type": "string"
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                        "tag"
+                    ]
                 },
                 "Error": {
                     "type": "object",
@@ -8268,7 +8329,7 @@
     },
     {
         "Name": "CAASFirewallerEmbedded",
-        "Description": "FacadeEmbedded provides access to the CAASFireWaller API facade for embedded applications.",
+        "Description": "FacadeSidecar provides access to the CAASFirewaller API facade for sidecar applications.",
         "Version": 1,
         "AvailableTo": [
             "controller-machine-agent",
@@ -9267,6 +9328,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -9380,6 +9444,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -9704,6 +9771,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -9983,6 +10053,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -10400,6 +10473,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -10540,6 +10616,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -11140,6 +11219,9 @@
                     "type": "object",
                     "properties": {
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -13706,6 +13788,9 @@
                         },
                         "reference": {
                             "type": "string"
+                        },
+                        "switch-charm": {
+                            "type": "boolean"
                         }
                     },
                     "additionalProperties": false,
@@ -13973,7 +14058,7 @@
                             "$ref": "#/definitions/BundleChangesResults"
                         }
                     },
-                    "description": "GetBundleChanges returns the list of changes required to deploy the given\nbundle data. The changes are sorted by requirements, so that they can be\napplied in order.\nThis call is deprecated, clients should use the GetChanges endpoint on the\nBundle facade.\nNote: any new feature in the future like devices will never be supported here."
+                    "description": "GetBundleChanges returns the list of changes required to deploy the given\nbundle data. The changes are sorted by requirements, so that they can be\napplied in order.\nDeprecated: clients should use the GetChanges endpoint on the Bundle facade.\nNote: any new feature in the future like devices will never be supported here."
                 },
                 "GetModelConstraints": {
                     "type": "object",
@@ -14339,6 +14424,9 @@
                     "type": "object",
                     "properties": {
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -15136,6 +15224,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -17465,7 +17556,7 @@
     {
         "Name": "Controller",
         "Description": "ControllerAPI provides the Controller API.",
-        "Version": 9,
+        "Version": 10,
         "AvailableTo": [
             "controller-machine-agent",
             "machine-agent",
@@ -19890,6 +19981,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -20075,6 +20169,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -21066,8 +21163,8 @@
     },
     {
         "Name": "Firewaller",
-        "Description": "FirewallerAPIV6 provides access to the Firewaller v6 API facade.",
-        "Version": 6,
+        "Description": "FirewallerAPIV7 provides access to the Firewaller v7 API facade.",
+        "Version": 7,
         "AvailableTo": [
             "controller-machine-agent",
             "machine-agent",
@@ -23605,6 +23702,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -25841,6 +25941,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -26798,6 +26901,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -26937,6 +27043,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -30163,6 +30272,9 @@
                         },
                         "model-tag": {
                             "type": "string"
+                        },
+                        "timeout": {
+                            "type": "integer"
                         }
                     },
                     "additionalProperties": false,
@@ -32768,6 +32880,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -33056,7 +33171,6 @@
                         "snap-store-assertions",
                         "snap-store-proxy-id",
                         "snap-store-proxy-url",
-                        "apt-mirror",
                         "UpdateBehavior"
                     ]
                 },
@@ -33511,6 +33625,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -34404,9 +34521,6 @@
                 "ToolsResult": {
                     "type": "object",
                     "properties": {
-                        "disable-ssl-hostname-verification": {
-                            "type": "boolean"
-                        },
                         "error": {
                             "$ref": "#/definitions/Error"
                         },
@@ -34419,8 +34533,7 @@
                     },
                     "additionalProperties": false,
                     "required": [
-                        "tools",
-                        "disable-ssl-hostname-verification"
+                        "tools"
                     ]
                 },
                 "ToolsResults": {
@@ -34729,7 +34842,7 @@
                             "$ref": "#/definitions/NotifyWatchResults"
                         }
                     },
-                    "description": "WatchForProxyConfigAndAPIHostPortChanges watches for cleanups to be perfomed in state"
+                    "description": "WatchForProxyConfigAndAPIHostPortChanges watches for changes to the proxy and api host port settings."
                 }
             },
             "definitions": {
@@ -34842,6 +34955,9 @@
                 "ProxyConfigResult": {
                     "type": "object",
                     "properties": {
+                        "apt-mirror": {
+                            "type": "string"
+                        },
                         "apt-proxy-settings": {
                             "$ref": "#/definitions/ProxyConfig"
                         },
@@ -37208,7 +37324,7 @@
                             "$ref": "#/definitions/SSHAddressResults"
                         }
                     },
-                    "description": "PublicAddress reports the preferred public network address for one\nor more entities. Machines and units are suppored."
+                    "description": "PublicAddress reports the preferred public network address for one\nor more entities. Machines and units are supported."
                 },
                 "PublicKeys": {
                     "type": "object",
@@ -41410,7 +41526,7 @@
                             "$ref": "#/definitions/NotifyWatchResults"
                         }
                     },
-                    "description": "WatchModelResources creates watchers for changes to the lifecycle of an\nmodel's machines and services."
+                    "description": "WatchModelResources creates watchers for changes to the lifecycle of an\nmodel's machines and applications and storage."
                 }
             },
             "definitions": {
@@ -41559,6 +41675,9 @@
                 "UndertakerModelInfo": {
                     "type": "object",
                     "properties": {
+                        "destroy-timeout": {
+                            "type": "integer"
+                        },
                         "force-destroyed": {
                             "type": "boolean"
                         },
@@ -41584,8 +41703,7 @@
                         "name",
                         "global-name",
                         "is-system",
-                        "life",
-                        "force-destroyed"
+                        "life"
                     ]
                 },
                 "UndertakerModelInfoResult": {
@@ -41801,8 +41919,8 @@
     },
     {
         "Name": "Uniter",
-        "Description": "UniterAPI implements the latest version (v17) of the Uniter API, which\naugments the payload of the CommitHookChanges API call and introduces\nthe OpenedMachinePortRanges call as a replacement for AllMachinePorts.",
-        "Version": 17,
+        "Description": "UniterAPI implements the latest version (v18) of the Uniter API, which\naugments the payload of the CommitHookChanges API call and introduces\nthe OpenedMachinePortRanges call as a replacement for AllMachinePorts.",
+        "Version": 18,
         "AvailableTo": [
             "controller-machine-agent",
             "machine-agent",
@@ -43070,6 +43188,9 @@
                         "cidr": {
                             "type": "string"
                         },
+                        "config-type": {
+                            "type": "string"
+                        },
                         "is-secondary": {
                             "type": "boolean"
                         },
@@ -43769,6 +43890,9 @@
                             "$ref": "#/definitions/Address"
                         },
                         "cidr": {
+                            "type": "string"
+                        },
+                        "config-type": {
                             "type": "string"
                         },
                         "is-secondary": {
@@ -45242,6 +45366,9 @@
                         },
                         "status": {
                             "type": "string"
+                        },
+                        "target": {
+                            "type": "string"
                         }
                     },
                     "additionalProperties": false
@@ -45805,6 +45932,9 @@
                         },
                         "status": {
                             "type": "string"
+                        },
+                        "target": {
+                            "type": "string"
                         }
                     },
                     "additionalProperties": false
@@ -45985,7 +46115,8 @@
         "AvailableTo": [
             "controller-machine-agent",
             "machine-agent",
-            "unit-agent"
+            "unit-agent",
+            "model-user"
         ],
         "Schema": {
             "type": "object",
@@ -46267,9 +46398,6 @@
                 "ToolsResult": {
                     "type": "object",
                     "properties": {
-                        "disable-ssl-hostname-verification": {
-                            "type": "boolean"
-                        },
                         "error": {
                             "$ref": "#/definitions/Error"
                         },
@@ -46282,8 +46410,7 @@
                     },
                     "additionalProperties": false,
                     "required": [
-                        "tools",
-                        "disable-ssl-hostname-verification"
+                        "tools"
                     ]
                 },
                 "ToolsResults": {

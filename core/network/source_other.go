@@ -56,6 +56,13 @@ func (a *netAddr) IPNet() *net.IPNet {
 	return a.ipNet
 }
 
+// IsSecondary (ConfigSourceAddr) always returns false for
+// addresses from the non-*nix config source.
+// The Go stdlib does not surface the IFA_F_SECONDARY flag.
+func (a *netAddr) IsSecondary() bool {
+	return false
+}
+
 // String (ConfigSourceAddr) is a simple property accessor.
 func (a *netAddr) String() string {
 	return a.addr
@@ -65,10 +72,10 @@ func (a *netAddr) String() string {
 // reference from the standard library `net` package.
 type netNIC struct {
 	nic       *net.Interface
-	parseType func(string) InterfaceType
+	parseType func(string) LinkLayerDeviceType
 }
 
-func newNetNIC(nic *net.Interface, parseType func(string) InterfaceType) *netNIC {
+func newNetNIC(nic *net.Interface, parseType func(string) LinkLayerDeviceType) *netNIC {
 	return &netNIC{
 		nic:       nic,
 		parseType: parseType,
@@ -86,20 +93,20 @@ func (n *netNIC) Index() int {
 }
 
 // Type returns the interface type of the device.
-func (n *netNIC) Type() InterfaceType {
+func (n *netNIC) Type() LinkLayerDeviceType {
 	nicType := n.parseType(n.Name())
 
-	if nicType != UnknownInterface {
+	if nicType != UnknownDevice {
 		return nicType
 	}
 
 	if n.nic.Flags&net.FlagLoopback > 0 {
-		return LoopbackInterface
+		return LoopbackDevice
 	}
 
 	// See comment on super-method.
 	// This is incorrect for veth, tuntap, macvtap et al.
-	return EthernetInterface
+	return EthernetDevice
 }
 
 // HardwareAddr returns the hardware address of the device.
@@ -150,7 +157,7 @@ func (s *netPackageConfigSource) Interfaces() ([]ConfigSourceNIC, error) {
 		return nil, errors.Trace(err)
 	}
 
-	parseType := func(name string) InterfaceType { return ParseInterfaceType(s.sysClassNetPath, name) }
+	parseType := func(name string) LinkLayerDeviceType { return ParseInterfaceType(s.sysClassNetPath, name) }
 	result := make([]ConfigSourceNIC, len(nics))
 	for i := range nics {
 		// Close over the sysClassNetPath so that

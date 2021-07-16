@@ -23,6 +23,7 @@ import (
 	k8sexec "github.com/juju/juju/caas/kubernetes/provider/exec"
 	jujucloud "github.com/juju/juju/cloud"
 	corecharm "github.com/juju/juju/core/charm"
+	environsbootstrap "github.com/juju/juju/environs/bootstrap"
 	"github.com/juju/juju/environs/cloudspec"
 	jujussh "github.com/juju/juju/network/ssh"
 )
@@ -40,6 +41,7 @@ type sshContainer struct {
 	container string
 	args      []string
 	modelUUID string
+	modelName string
 
 	cloudCredentialAPI CloudCredentialAPI
 	modelAPI           ModelAPI
@@ -183,7 +185,17 @@ func (c *sshContainer) cleanupRun() {
 	}
 }
 
+const charmContainerName = "charm"
+
 func (c *sshContainer) resolveTarget(target string) (*resolvedTarget, error) {
+	if c.modelName == environsbootstrap.ControllerModelName && names.IsValidMachine(target) {
+		// TODO(caas): change here to controller unit tag once we refactored controller to an application.
+		if target != "0" {
+			// HA is not enabled on CaaS controller yet.
+			return nil, errors.NotFoundf("target %q", target)
+		}
+		return &resolvedTarget{entity: fmt.Sprintf("%s-%s", environsbootstrap.ControllerModelName, target)}, nil
+	}
 	// If the user specified a leader unit, try to resolve it to the
 	// appropriate unit name and override the requested target name.
 	resolvedTargetName, err := maybeResolveLeaderUnit(c.statusAPIGetter, target)
@@ -219,11 +231,17 @@ func (c *sshContainer) resolveTarget(target string) (*resolvedTarget, error) {
 	if !isMetaV2 && !c.remote {
 		// We don't want to introduce CaaS broker here, but only use exec client.
 		podAPI := c.execClient.RawClient().CoreV1().Pods(c.execClient.NameSpace())
+		modelName := c.modelName
+		// Model name should always be set, but just in case...
+		if modelName == "" {
+			modelName = c.execClient.NameSpace()
+		}
 		providerID, err = k8sprovider.GetOperatorPodName(
 			podAPI,
 			c.execClient.RawClient().CoreV1().Namespaces(),
 			appName,
 			c.execClient.NameSpace(),
+			modelName,
 		)
 
 		if err != nil {
@@ -242,9 +260,10 @@ func (c *sshContainer) resolveTarget(target string) (*resolvedTarget, error) {
 	if isMetaV2 {
 		meta := charmInfo.Charm().Meta()
 		if c.container == "" {
-			c.container = "charm"
-		} else if _, ok := meta.Containers[c.container]; !ok {
-			containers := []string{"charm"}
+			c.container = charmContainerName
+		}
+		if _, ok := meta.Containers[c.container]; !ok && c.container != charmContainerName {
+			containers := []string{charmContainerName}
 			for k := range meta.Containers {
 				containers = append(containers, k)
 			}
@@ -359,6 +378,8 @@ func (c *sshContainer) getExecClient() (k8sexec.Executor, error) {
 	if mInfo.Error != nil {
 		return nil, errors.Annotatef(mInfo.Error, "getting model information")
 	}
+	c.modelName = mInfo.Result.Name
+
 	credentialTag, err := names.ParseCloudCredentialTag(mInfo.Result.CloudCredentialTag)
 	if err != nil {
 		return nil, err
@@ -388,4 +409,8 @@ func (c *sshContainer) getExecClient() (k8sexec.Executor, error) {
 		return nil, err
 	}
 	return c.execClientGetter(mInfo.Result.Name, cloudSpec)
+}
+
+func (c *sshContainer) maybePopulateTargetViaField(target *resolvedTarget, statusGetter func([]string) (*params.FullStatus, error)) error {
+	return nil
 }

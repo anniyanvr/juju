@@ -5,6 +5,7 @@ package lxd_test
 
 import (
 	"context"
+	stdcontext "context"
 
 	"github.com/golang/mock/gomock"
 	"github.com/juju/cmd/cmdtesting"
@@ -107,7 +108,7 @@ func (s *environSuite) TestBootstrapOkay(c *gc.C) {
 }
 
 func (s *environSuite) TestBootstrapAPI(c *gc.C) {
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(context.TODO(), c)
 	params := environs.BootstrapParams{
 		ControllerConfig:         coretesting.FakeControllerConfig(),
 		SupportedBootstrapSeries: coretesting.FakeSupportedJujuSeries,
@@ -388,31 +389,42 @@ type environCloudProfileSuite struct {
 var _ = gc.Suite(&environCloudProfileSuite{})
 
 func (s *environCloudProfileSuite) TestSetCloudSpecCreateProfile(c *gc.C) {
-	defer s.setup(c).Finish()
+	defer s.setup(c, nil).Finish()
 	s.expectHasProfileFalse("juju-controller")
 	s.expectCreateProfile("juju-controller", nil)
 
-	err := s.cloudSpecEnv.SetCloudSpec(lxdCloudSpec())
+	err := s.cloudSpecEnv.SetCloudSpec(stdcontext.TODO(), lxdCloudSpec())
 	c.Assert(err, jc.ErrorIsNil)
 }
 
 func (s *environCloudProfileSuite) TestSetCloudSpecCreateProfileErrorSucceeds(c *gc.C) {
-	defer s.setup(c).Finish()
+	defer s.setup(c, nil).Finish()
 	s.expectForProfileCreateRace("juju-controller")
 	s.expectCreateProfile("juju-controller", errors.New("The profile already exists"))
 
-	err := s.cloudSpecEnv.SetCloudSpec(lxdCloudSpec())
+	err := s.cloudSpecEnv.SetCloudSpec(stdcontext.TODO(), lxdCloudSpec())
 	c.Assert(err, jc.ErrorIsNil)
 }
 
-func (s *environCloudProfileSuite) setup(c *gc.C) *gomock.Controller {
+func (s *environCloudProfileSuite) TestSetCloudSpecUsesConfiguredProject(c *gc.C) {
+	defer s.setup(c, map[string]interface{}{"project": "my-project"}).Finish()
+	s.expectHasProfileFalse("juju-controller")
+	s.expectCreateProfile("juju-controller", nil)
+
+	s.svr.EXPECT().UseProject("my-project")
+
+	err := s.cloudSpecEnv.SetCloudSpec(stdcontext.TODO(), lxdCloudSpec())
+	c.Assert(err, jc.ErrorIsNil)
+}
+
+func (s *environCloudProfileSuite) setup(c *gc.C, cfgEdit map[string]interface{}) *gomock.Controller {
 	ctrl := gomock.NewController(c)
 	s.svr = lxd.NewMockServer(ctrl)
 
 	svrFactory := lxd.NewMockServerFactory(ctrl)
 	svrFactory.EXPECT().RemoteServer(lxdCloudSpec()).Return(s.svr, nil)
 
-	env, ok := s.NewEnvironWithServerFactory(c, svrFactory, nil).(environs.CloudSpecSetter)
+	env, ok := s.NewEnvironWithServerFactory(c, svrFactory, cfgEdit).(environs.CloudSpecSetter)
 	c.Assert(ok, jc.IsTrue)
 	s.cloudSpecEnv = env
 

@@ -47,7 +47,7 @@ type ipAddressDoc struct {
 	SubnetCIDR string `bson:"subnet-cidr"`
 
 	// ConfigMethod is the method used to configure this IP address.
-	ConfigMethod network.AddressConfigMethod `bson:"config-method"`
+	ConfigMethod network.AddressConfigType `bson:"config-method"`
 
 	// Value is the value of the configured IP address, e.g. 192.168.1.2 or
 	// 2001:db8::/64.
@@ -100,11 +100,6 @@ type Address struct {
 
 func newIPAddress(st *State, doc ipAddressDoc) *Address {
 	return &Address{st: st, doc: doc}
-}
-
-// NetworkAddress returns the address transformed to a network.Address.
-func (addr *Address) NetworkAddress() network.SpaceAddress {
-	return network.NewSpaceAddress(addr.Value())
 }
 
 // DocID returns the globally unique ID of the IP address, including the model
@@ -168,14 +163,14 @@ func (addr *Address) Subnet() (*Subnet, error) {
 }
 
 // ConfigMethod returns the AddressConfigMethod used for this IP address.
-func (addr *Address) ConfigMethod() network.AddressConfigMethod {
+func (addr *Address) ConfigMethod() network.AddressConfigType {
 	return addr.doc.ConfigMethod
 }
 
 // LoopbackConfigMethod returns whether AddressConfigMethod used for this IP
 // address was loopback.
 func (addr *Address) LoopbackConfigMethod() bool {
-	return addr.doc.ConfigMethod == network.LoopbackAddress
+	return addr.doc.ConfigMethod == network.ConfigLoopback
 }
 
 // Value returns the value of this IP address.
@@ -361,6 +356,7 @@ func (addr *Address) UpdateOps(args LinkLayerDeviceAddress) ([]txn.Op, error) {
 		DNSSearchDomains:  args.DNSSearchDomains,
 		GatewayAddress:    args.GatewayAddress,
 		IsDefaultGateway:  args.IsDefaultGateway,
+		IsSecondary:       args.IsSecondary,
 		Origin:            args.Origin,
 	}
 
@@ -457,6 +453,10 @@ func updateIPAddressDocOp(existingDoc, newDoc *ipAddressDoc) (txn.Op, bool) {
 
 	if existingDoc.GatewayAddress != newDoc.GatewayAddress {
 		changes["gateway-address"] = newDoc.GatewayAddress
+	}
+
+	if existingDoc.IsSecondary != newDoc.IsSecondary {
+		changes["is-secondary"] = newDoc.IsSecondary
 	}
 
 	var updates bson.D

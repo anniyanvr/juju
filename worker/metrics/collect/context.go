@@ -40,7 +40,11 @@ func newHookContext(config hookConfig) *hookContext {
 }
 
 // HookVars implements runner.Context.
-func (ctx *hookContext) HookVars(paths context.Paths, remote bool, getEnv context.GetEnvFunc) ([]string, error) {
+func (ctx *hookContext) HookVars(
+	paths context.Paths,
+	remote bool,
+	envVars context.Environmenter,
+) ([]string, error) {
 	vars := []string{
 		"CHARM_DIR=" + paths.GetCharmDir(), // legacy
 		"JUJU_CHARM_DIR=" + paths.GetCharmDir(),
@@ -54,7 +58,7 @@ func (ctx *hookContext) HookVars(paths context.Paths, remote bool, getEnv contex
 			"JUJU_AGENT_CA_CERT="+path.Join(paths.GetBaseDir(), caas.CACertFile),
 		)
 	}
-	return append(vars, context.OSDependentEnvVars(paths, getEnv)...), nil
+	return append(vars, context.OSDependentEnvVars(paths, envVars)...), nil
 }
 
 // GetLogger returns the logger for the specified module.

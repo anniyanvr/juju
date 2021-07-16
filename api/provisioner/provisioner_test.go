@@ -648,9 +648,9 @@ func (s *provisionerSuite) TestWatchModelMachines(c *gc.C) {
 	wc.AssertChange(s.machine.Id())
 
 	// Add another 2 machines make sure they are detected.
-	otherMachine, err := s.State.AddMachine("quantal", state.JobHostUnits)
+	_, err = s.State.AddMachine("quantal", state.JobHostUnits)
 	c.Assert(err, jc.ErrorIsNil)
-	otherMachine, err = s.State.AddMachine("quantal", state.JobHostUnits)
+	otherMachine, err := s.State.AddMachine("quantal", state.JobHostUnits)
 	c.Assert(err, jc.ErrorIsNil)
 	wc.AssertChange("1", "2")
 
@@ -820,7 +820,7 @@ func (s *provisionerSuite) TestHostChangesForContainer(c *gc.C) {
 		state.LinkLayerDeviceAddress{
 			DeviceName:   "ens3",
 			CIDRAddress:  "10.0.0.10/24",
-			ConfigMethod: corenetwork.StaticAddress,
+			ConfigMethod: corenetwork.ConfigStatic,
 		},
 	)
 	c.Assert(err, jc.ErrorIsNil)
@@ -938,9 +938,9 @@ func (s *provisionerContainerSuite) TestPrepareContainerInterfaceInfoSingleNIC(c
 		Disabled:            false,
 		NoAutoStart:         false,
 		ConfigType:          "static",
-		Addresses: corenetwork.ProviderAddresses{
-			corenetwork.NewProviderAddress("192.168.0.6", corenetwork.WithCIDR("192.168.0.5/24")),
-		},
+		Addresses: corenetwork.ProviderAddresses{corenetwork.NewProviderAddress(
+			"192.168.0.6", corenetwork.WithCIDR("192.168.0.5/24"), corenetwork.WithConfigType(corenetwork.ConfigStatic),
+		)},
 		DNSServers:       corenetwork.NewProviderAddresses("8.8.8.8"),
 		DNSSearchDomains: []string{"mydomain"},
 		GatewayAddress:   corenetwork.NewProviderAddress("192.168.0.1"),

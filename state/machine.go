@@ -1654,45 +1654,6 @@ func (m *Machine) ProviderAddresses() (addresses network.SpaceAddresses) {
 	return
 }
 
-// AddressesBySpaceID groups the machine addresses by space id and
-// returns the result as a map where the space id is used a the key.
-// Loopback addresses are skipped.
-func (m *Machine) AddressesBySpaceID() (map[string][]network.SpaceAddress, error) {
-	res := make(map[string][]network.SpaceAddress)
-	err := m.visitAddressesInSpaces(func(subnet *Subnet, address *Address) {
-		spaceID := subnet.SpaceID()
-		res[spaceID] = append(res[spaceID], address.NetworkAddress())
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return res, nil
-}
-
-// visitAddressesInSpaces invokes visitFn for each non-loopback machine address
-// that is assigned to a space.
-func (m *Machine) visitAddressesInSpaces(visitFn func(subnet *Subnet, address *Address)) error {
-	addresses, err := m.AllAddresses()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, address := range addresses {
-		// Juju does not keep track of loopback subnets so we need
-		// to skip loopback addresses as the subnet lookup below will
-		// fail.
-		if address.LoopbackConfigMethod() {
-			continue
-		}
-		subnet, err := address.Subnet()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		visitFn(subnet, address)
-	}
-	return nil
-}
-
 // MachineAddresses returns any hostnames and ips associated with a machine,
 // determined by asking the machine itself.
 func (m *Machine) MachineAddresses() (addresses network.SpaceAddresses) {
@@ -2075,26 +2036,26 @@ func (m *Machine) VolumeAttachments() ([]VolumeAttachment, error) {
 	return sb.MachineVolumeAttachments(m.MachineTag())
 }
 
-// AddAction is part of the ActionReceiver interface.
-func (m *Machine) AddAction(operationID, name string, payload map[string]interface{}, parallel *bool, executionGroup *string) (Action, error) {
+// PrepareActionPayload returns the payload to use in creating an action for this machine.
+// Note that the use of spec.InsertDefaults mutates payload.
+func (m *Machine) PrepareActionPayload(name string, payload map[string]interface{}, parallel *bool, executionGroup *string) (map[string]interface{}, bool, string, error) {
+	if len(name) == 0 {
+		return nil, false, "", errors.New("no action name given")
+	}
+
 	spec, ok := actions.PredefinedActionsSpec[name]
 	if !ok {
-		return nil, errors.Errorf("cannot add action %q to a machine; only predefined actions allowed", name)
+		return nil, false, "", errors.Errorf("cannot add action %q to a machine; only predefined actions allowed", name)
 	}
 
 	// Reject bad payloads before attempting to insert defaults.
 	err := spec.ValidateParams(payload)
 	if err != nil {
-		return nil, err
+		return nil, false, "", errors.Trace(err)
 	}
 	payloadWithDefaults, err := spec.InsertDefaults(payload)
 	if err != nil {
-		return nil, err
-	}
-
-	model, err := m.st.Model()
-	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, "", errors.Trace(err)
 	}
 
 	runParallel := spec.Parallel
@@ -2105,7 +2066,8 @@ func (m *Machine) AddAction(operationID, name string, payload map[string]interfa
 	if executionGroup != nil {
 		runExecutionGroup = *executionGroup
 	}
-	return model.EnqueueAction(operationID, m.Tag(), name, payloadWithDefaults, runParallel, runExecutionGroup)
+
+	return payloadWithDefaults, runParallel, runExecutionGroup, nil
 }
 
 // CancelAction is part of the ActionReceiver interface.

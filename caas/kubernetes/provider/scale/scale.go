@@ -9,13 +9,14 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	apps "k8s.io/client-go/kubernetes/typed/apps/v1"
 )
 
 // ScalePatcher provides a generic interface for patching replicas count on
-// common Kubernetes objects. The Kubernets objects must support patching of
+// common Kubernetes objects. The Kubernetes objects must support patching of
 // spec.replicas to work with this interface
 type ScalePatcher interface {
 	// Patch patches the supplied object name with a supplied patch operation.
@@ -31,7 +32,7 @@ type scalePatchSpec struct {
 	Replicas int32 `json:"replicas"`
 }
 
-// ScalePatcherFunc is a convience func to implement the ScalePatcher interface
+// ScalePatcherFunc is a convenience func to implement the ScalePatcher interface
 type ScalePatcherFunc func(context.Context, string, types.PatchType, []byte, meta.PatchOptions, ...string) (int32, error)
 
 // DeploymentScalePatcher returns a ScalePatcher suitable for use with
@@ -46,6 +47,9 @@ func DeploymentScalePatcher(deploy apps.DeploymentInterface) ScalePatcher {
 		s ...string,
 	) (int32, error) {
 		deployment, err := deploy.Patch(c, n, p, d, o, s...)
+		if k8serrors.IsNotFound(err) {
+			return 0, errors.NotFoundf("deployment %q", n)
+		}
 		if err != nil {
 			return 0, errors.Annotatef(err, "scale patching deployment %q", n)
 		}
@@ -90,8 +94,11 @@ func PatchReplicasToScale(
 		name,
 		types.StrategicMergePatchType,
 		patch,
-		meta.PatchOptions{})
-
+		meta.PatchOptions{},
+	)
+	if k8serrors.IsNotFound(err) {
+		return errors.NewNotFound(err, name)
+	}
 	if err != nil {
 		return errors.Annotatef(err, "setting scale to %d for %q", scale, name)
 	}
@@ -103,8 +110,8 @@ func PatchReplicasToScale(
 	return nil
 }
 
-// StatefulSetScalePatch returns a ScalePatcher suitable for use with
-// Statefulsets
+// StatefulSetScalePatcher returns a ScalePatcher suitable for use with
+// Statefulsets.
 func StatefulSetScalePatcher(stateSet apps.StatefulSetInterface) ScalePatcher {
 	return ScalePatcherFunc(func(
 		c context.Context,
@@ -115,6 +122,9 @@ func StatefulSetScalePatcher(stateSet apps.StatefulSetInterface) ScalePatcher {
 		s ...string,
 	) (int32, error) {
 		ss, err := stateSet.Patch(c, n, p, d, o, s...)
+		if k8serrors.IsNotFound(err) {
+			return 0, errors.NotFoundf("statefulset %q", n)
+		}
 		if err != nil {
 			return 0, errors.Annotatef(err, "scale patching statefulset %q", n)
 		}

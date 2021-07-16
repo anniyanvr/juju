@@ -4,6 +4,7 @@
 package provider_test
 
 import (
+	stdcontext "context"
 	"fmt"
 	"strings"
 	"time"
@@ -31,11 +32,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	k8sversion "k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/pointer"
 
 	"github.com/juju/juju/caas"
 	"github.com/juju/juju/caas/kubernetes/provider"
 	k8sspecs "github.com/juju/juju/caas/kubernetes/provider/specs"
-	"github.com/juju/juju/caas/kubernetes/provider/utils"
+	k8sutils "github.com/juju/juju/caas/kubernetes/provider/utils"
 	k8swatcher "github.com/juju/juju/caas/kubernetes/provider/watcher"
 	k8swatchertest "github.com/juju/juju/caas/kubernetes/provider/watcher/test"
 	"github.com/juju/juju/caas/specs"
@@ -58,26 +60,6 @@ type K8sSuite struct {
 
 var _ = gc.Suite(&K8sSuite{})
 
-func float64Ptr(f float64) *float64 {
-	return &f
-}
-
-func intPtr(i int) *int {
-	return &i
-}
-
-func int32Ptr(i int32) *int32 {
-	return &i
-}
-
-func int64Ptr(i int64) *int64 {
-	return &i
-}
-
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 
 	podSpec := specs.PodSpec{
@@ -88,10 +70,10 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 		KubernetesResources: &k8sspecs.KubernetesResources{
 			Pod: &k8sspecs.PodSpec{
 				RestartPolicy:                 core.RestartPolicyOnFailure,
-				ActiveDeadlineSeconds:         int64Ptr(10),
-				TerminationGracePeriodSeconds: int64Ptr(20),
+				ActiveDeadlineSeconds:         pointer.Int64Ptr(10),
+				TerminationGracePeriodSeconds: pointer.Int64Ptr(20),
 				SecurityContext: &core.PodSecurityContext{
-					RunAsNonRoot:       boolPtr(true),
+					RunAsNonRoot:       pointer.BoolPtr(true),
 					SupplementalGroups: []int64{1, 2},
 				},
 				ReadinessGates: []core.PodReadinessGate{
@@ -101,7 +83,7 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 				HostNetwork:       true,
 				HostPID:           true,
 				PriorityClassName: "system-cluster-critical",
-				Priority:          int32Ptr(2000000000),
+				Priority:          pointer.Int32Ptr(2000000000),
 			},
 		},
 	}
@@ -121,8 +103,8 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 					Handler:          core.Handler{HTTPGet: &core.HTTPGetAction{Path: "/liveready"}},
 				},
 				SecurityContext: &core.SecurityContext{
-					RunAsNonRoot: boolPtr(true),
-					Privileged:   boolPtr(true),
+					RunAsNonRoot: pointer.BoolPtr(true),
+					Privileged:   pointer.BoolPtr(true),
 				},
 			},
 		}, {
@@ -139,10 +121,10 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 		Annotations: annotations.Annotation{},
 		PodSpec: core.PodSpec{
 			RestartPolicy:                 core.RestartPolicyOnFailure,
-			ActiveDeadlineSeconds:         int64Ptr(10),
-			TerminationGracePeriodSeconds: int64Ptr(20),
+			ActiveDeadlineSeconds:         pointer.Int64Ptr(10),
+			TerminationGracePeriodSeconds: pointer.Int64Ptr(20),
 			SecurityContext: &core.PodSecurityContext{
-				RunAsNonRoot:       boolPtr(true),
+				RunAsNonRoot:       pointer.BoolPtr(true),
 				SupplementalGroups: []int64{1, 2},
 			},
 			ReadinessGates: []core.PodReadinessGate{
@@ -152,9 +134,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 			HostNetwork:                  true,
 			HostPID:                      true,
 			PriorityClassName:            "system-cluster-critical",
-			Priority:                     int32Ptr(2000000000),
+			Priority:                     pointer.Int32Ptr(2000000000),
 			ServiceAccountName:           "app-name",
-			AutomountServiceAccountToken: boolPtr(true),
+			AutomountServiceAccountToken: pointer.BoolPtr(true),
 			InitContainers:               initContainers(),
 			Containers: []core.Container{
 				{
@@ -163,8 +145,8 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 					Ports:           []core.ContainerPort{{ContainerPort: int32(80), Protocol: core.ProtocolTCP}},
 					ImagePullPolicy: core.PullAlways,
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot: boolPtr(true),
-						Privileged:   boolPtr(true),
+						RunAsNonRoot: pointer.BoolPtr(true),
+						Privileged:   pointer.BoolPtr(true),
 					},
 					ReadinessProbe: &core.Probe{
 						InitialDelaySeconds: 10,
@@ -181,9 +163,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecNoConfigConfig(c *gc.C) {
 					Ports: []core.ContainerPort{{ContainerPort: int32(8080), Protocol: core.ProtocolTCP}},
 					// Defaults since not specified.
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				},
@@ -203,10 +185,10 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 		KubernetesResources: &k8sspecs.KubernetesResources{
 			Pod: &k8sspecs.PodSpec{
 				RestartPolicy:                 core.RestartPolicyOnFailure,
-				ActiveDeadlineSeconds:         int64Ptr(10),
-				TerminationGracePeriodSeconds: int64Ptr(20),
+				ActiveDeadlineSeconds:         pointer.Int64Ptr(10),
+				TerminationGracePeriodSeconds: pointer.Int64Ptr(20),
 				SecurityContext: &core.PodSecurityContext{
-					RunAsNonRoot:       boolPtr(true),
+					RunAsNonRoot:       pointer.BoolPtr(true),
 					SupplementalGroups: []int64{1, 2},
 				},
 				ReadinessGates: []core.PodReadinessGate{
@@ -234,7 +216,7 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 	envVarThing1.ValueFrom.ConfigMapKeyRef.Name = "foo"
 
 	envFromSourceSecret1 := core.EnvFromSource{
-		SecretRef: &core.SecretEnvSource{Optional: boolPtr(true)},
+		SecretRef: &core.SecretEnvSource{Optional: pointer.BoolPtr(true)},
 	}
 	envFromSourceSecret1.SecretRef.Name = "secret1"
 
@@ -244,7 +226,7 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 	envFromSourceSecret2.SecretRef.Name = "secret2"
 
 	envFromSourceConfigmap1 := core.EnvFromSource{
-		ConfigMapRef: &core.ConfigMapEnvSource{Optional: boolPtr(true)},
+		ConfigMapRef: &core.ConfigMapEnvSource{Optional: pointer.BoolPtr(true)},
 	}
 	envFromSourceConfigmap1.ConfigMapRef.Name = "configmap1"
 
@@ -325,8 +307,8 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 					Handler:          core.Handler{HTTPGet: &core.HTTPGetAction{Path: "/liveready"}},
 				},
 				SecurityContext: &core.SecurityContext{
-					RunAsNonRoot: boolPtr(true),
-					Privileged:   boolPtr(true),
+					RunAsNonRoot: pointer.BoolPtr(true),
+					Privileged:   pointer.BoolPtr(true),
 				},
 			},
 		}, {
@@ -343,10 +325,10 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 		Annotations: annotations.Annotation{},
 		PodSpec: core.PodSpec{
 			RestartPolicy:                 core.RestartPolicyOnFailure,
-			ActiveDeadlineSeconds:         int64Ptr(10),
-			TerminationGracePeriodSeconds: int64Ptr(20),
+			ActiveDeadlineSeconds:         pointer.Int64Ptr(10),
+			TerminationGracePeriodSeconds: pointer.Int64Ptr(20),
 			SecurityContext: &core.PodSecurityContext{
-				RunAsNonRoot:       boolPtr(true),
+				RunAsNonRoot:       pointer.BoolPtr(true),
 				SupplementalGroups: []int64{1, 2},
 			},
 			ReadinessGates: []core.PodReadinessGate{
@@ -354,7 +336,7 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 			},
 			DNSPolicy:                    core.DNSClusterFirst,
 			ServiceAccountName:           "app-name",
-			AutomountServiceAccountToken: boolPtr(true),
+			AutomountServiceAccountToken: pointer.BoolPtr(true),
 			InitContainers:               initContainers(),
 			Containers: []core.Container{
 				{
@@ -363,8 +345,8 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 					Ports:           []core.ContainerPort{{ContainerPort: int32(80), Protocol: core.ProtocolTCP}},
 					ImagePullPolicy: core.PullAlways,
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot: boolPtr(true),
-						Privileged:   boolPtr(true),
+						RunAsNonRoot: pointer.BoolPtr(true),
+						Privileged:   pointer.BoolPtr(true),
 					},
 					ReadinessProbe: &core.Probe{
 						InitialDelaySeconds: 10,
@@ -410,9 +392,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithEnvAndEnvFrom(c *gc.C) {
 					Ports: []core.ContainerPort{{ContainerPort: int32(8080), Protocol: core.ProtocolTCP}},
 					// Defaults since not specified.
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				},
@@ -440,8 +422,8 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithInitContainers(c *gc.C) {
 					Handler:          core.Handler{HTTPGet: &core.HTTPGetAction{Path: "/liveready"}},
 				},
 				SecurityContext: &core.SecurityContext{
-					RunAsNonRoot: boolPtr(true),
-					Privileged:   boolPtr(true),
+					RunAsNonRoot: pointer.BoolPtr(true),
+					Privileged:   pointer.BoolPtr(true),
 				},
 			},
 		}, {
@@ -479,8 +461,8 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithInitContainers(c *gc.C) {
 						Handler:          core.Handler{HTTPGet: &core.HTTPGetAction{Path: "/liveready"}},
 					},
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot: boolPtr(true),
-						Privileged:   boolPtr(true),
+						RunAsNonRoot: pointer.BoolPtr(true),
+						Privileged:   pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				}, {
@@ -489,9 +471,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithInitContainers(c *gc.C) {
 					Ports: []core.ContainerPort{{ContainerPort: int32(8080), Protocol: core.ProtocolTCP}},
 					// Defaults since not specified.
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				},
@@ -506,9 +488,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecWithInitContainers(c *gc.C) {
 					ImagePullPolicy: core.PullAlways,
 					// Defaults since not specified.
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 				},
 			}, initContainers()...),
@@ -529,10 +511,10 @@ func (s *K8sSuite) TestPrepareWorkloadSpec(c *gc.C) {
 				Labels:                        map[string]string{"foo": "bax"},
 				Annotations:                   map[string]string{"foo": "baz"},
 				RestartPolicy:                 core.RestartPolicyOnFailure,
-				ActiveDeadlineSeconds:         int64Ptr(10),
-				TerminationGracePeriodSeconds: int64Ptr(20),
+				ActiveDeadlineSeconds:         pointer.Int64Ptr(10),
+				TerminationGracePeriodSeconds: pointer.Int64Ptr(20),
 				SecurityContext: &core.PodSecurityContext{
-					RunAsNonRoot:       boolPtr(true),
+					RunAsNonRoot:       pointer.BoolPtr(true),
 					SupplementalGroups: []int64{1, 2},
 				},
 				ReadinessGates: []core.PodReadinessGate{
@@ -560,19 +542,19 @@ func (s *K8sSuite) TestPrepareWorkloadSpec(c *gc.C) {
 		Annotations: map[string]string{"foo": "baz"},
 		PodSpec: core.PodSpec{
 			RestartPolicy:                 core.RestartPolicyOnFailure,
-			ActiveDeadlineSeconds:         int64Ptr(10),
-			TerminationGracePeriodSeconds: int64Ptr(20),
+			ActiveDeadlineSeconds:         pointer.Int64Ptr(10),
+			TerminationGracePeriodSeconds: pointer.Int64Ptr(20),
 			ReadinessGates: []core.PodReadinessGate{
 				{ConditionType: core.PodInitialized},
 			},
 			DNSPolicy:                    core.DNSClusterFirst,
 			ServiceAccountName:           "app-name",
-			AutomountServiceAccountToken: boolPtr(true),
+			AutomountServiceAccountToken: pointer.BoolPtr(true),
 			HostNetwork:                  true,
 			HostPID:                      true,
 			InitContainers:               initContainers(),
 			SecurityContext: &core.PodSecurityContext{
-				RunAsNonRoot:       boolPtr(true),
+				RunAsNonRoot:       pointer.BoolPtr(true),
 				SupplementalGroups: []int64{1, 2},
 			},
 			Containers: []core.Container{
@@ -582,9 +564,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpec(c *gc.C) {
 					Ports:           []core.ContainerPort{{ContainerPort: int32(80), Protocol: core.ProtocolTCP}},
 					ImagePullPolicy: core.PullAlways,
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				},
@@ -610,7 +592,7 @@ func (s *K8sSuite) TestPrepareWorkloadSpecPrimarySA(c *gc.C) {
 	c.Assert(provider.Pod(spec), jc.DeepEquals, k8sspecs.PodSpecWithAnnotations{
 		PodSpec: core.PodSpec{
 			ServiceAccountName:           "app-name",
-			AutomountServiceAccountToken: boolPtr(true),
+			AutomountServiceAccountToken: pointer.BoolPtr(true),
 			InitContainers:               initContainers(),
 			Containers: []core.Container{
 				{
@@ -619,9 +601,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecPrimarySA(c *gc.C) {
 					Ports:           []core.ContainerPort{{ContainerPort: int32(80), Protocol: core.ProtocolTCP}},
 					ImagePullPolicy: core.PullAlways,
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				},
@@ -691,7 +673,7 @@ var basicHeadlessServiceArg = &core.Service{
 
 var primeServiceAccount = &specs.PrimeServiceAccountSpecV3{
 	ServiceAccountSpecV3: specs.ServiceAccountSpecV3{
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 		Roles: []specs.Role{
 			{
 				Rules: []specs.PolicyRule{
@@ -707,7 +689,8 @@ var primeServiceAccount = &specs.PrimeServiceAccountSpecV3{
 }
 
 func (s *K8sBrokerSuite) getOCIImageSecret(c *gc.C, annotations map[string]string) *core.Secret {
-	secretData, err := provider.CreateDockerConfigJSON(&getBasicPodspec().Containers[0].ImageDetails)
+	details := getBasicPodspec().Containers[0].ImageDetails
+	secretData, err := k8sutils.CreateDockerConfigJSON(details.Username, details.Password, details.ImagePath)
 	c.Assert(err, jc.ErrorIsNil)
 	if annotations == nil {
 		annotations = map[string]string{}
@@ -750,9 +733,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecConfigPairs(c *gc.C) {
 					},
 					// Defaults since not specified.
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				}, {
@@ -761,9 +744,9 @@ func (s *K8sSuite) TestPrepareWorkloadSpecConfigPairs(c *gc.C) {
 					Ports: []core.ContainerPort{{ContainerPort: int32(8080), Protocol: core.ProtocolTCP, Name: "fred"}},
 					// Defaults since not specified.
 					SecurityContext: &core.SecurityContext{
-						RunAsNonRoot:             boolPtr(false),
-						ReadOnlyRootFilesystem:   boolPtr(false),
-						AllowPrivilegeEscalation: boolPtr(true),
+						RunAsNonRoot:             pointer.BoolPtr(false),
+						ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+						AllowPrivilegeEscalation: pointer.BoolPtr(true),
 					},
 					VolumeMounts: dataVolumeMounts(),
 				},
@@ -809,6 +792,70 @@ func (s *K8sBrokerSuite) assertFileSetToVolume(c *gc.C, fs specs.FileSet, result
 		workloadSpec, fs, cfgMapName,
 	)
 	resultChecker(vol, err)
+}
+
+func (s *K8sBrokerSuite) TestEnsureNamespaceAnnotationForControllerUUIDMigrated(c *gc.C) {
+	ctrl := gomock.NewController(c)
+
+	newK8sClientFunc, newK8sRestFunc := s.setupK8sRestClient(c, ctrl, s.getNamespace())
+	randomPrefixFunc := func() (string, error) {
+		return "appuuid", nil
+	}
+
+	newControllerUUID := names.NewControllerTag("deadbeef-1bad-500d-9000-4b1d0d06f00e").Id()
+	nsBefore := s.ensureJujuNamespaceAnnotations(false, &core.Namespace{
+		ObjectMeta: v1.ObjectMeta{
+			Name:   "test",
+			Labels: map[string]string{"app.kubernetes.io/managed-by": "juju", "model.juju.is/name": "test"},
+		},
+	})
+	nsAfter := *nsBefore
+	nsAfter.SetAnnotations(annotations.New(nsAfter.GetAnnotations()).Add(
+		k8sutils.AnnotationControllerUUIDKey(false), newControllerUUID,
+	))
+	gomock.InOrder(
+		s.mockNamespaces.EXPECT().Get(gomock.Any(), s.getNamespace(), v1.GetOptions{}).Times(2).
+			Return(nsBefore, nil),
+		s.mockNamespaces.EXPECT().Update(gomock.Any(), &nsAfter, v1.UpdateOptions{}).Times(1).
+			Return(&nsAfter, nil),
+	)
+	s.setupBroker(c, ctrl, newControllerUUID, newK8sClientFunc, newK8sRestFunc, randomPrefixFunc).Finish()
+}
+
+func (s *K8sBrokerSuite) TestEnsureNamespaceAnnotationForControllerUUIDNotMigrated(c *gc.C) {
+	ctrl := gomock.NewController(c)
+
+	newK8sClientFunc, newK8sRestFunc := s.setupK8sRestClient(c, ctrl, s.getNamespace())
+	randomPrefixFunc := func() (string, error) {
+		return "appuuid", nil
+	}
+
+	ns := s.ensureJujuNamespaceAnnotations(false, &core.Namespace{
+		ObjectMeta: v1.ObjectMeta{
+			Name:   "test",
+			Labels: map[string]string{"app.kubernetes.io/managed-by": "juju", "model.juju.is/name": "test"},
+		},
+	})
+	gomock.InOrder(
+		s.mockNamespaces.EXPECT().Get(gomock.Any(), s.getNamespace(), v1.GetOptions{}).Times(2).
+			Return(ns, nil),
+	)
+	s.setupBroker(c, ctrl, testing.ControllerTag.Id(), newK8sClientFunc, newK8sRestFunc, randomPrefixFunc).Finish()
+}
+
+func (s *K8sBrokerSuite) TestEnsureNamespaceAnnotationForControllerUUIDNameSpaceNotCreatedYet(c *gc.C) {
+	ctrl := gomock.NewController(c)
+
+	newK8sClientFunc, newK8sRestFunc := s.setupK8sRestClient(c, ctrl, s.getNamespace())
+	randomPrefixFunc := func() (string, error) {
+		return "appuuid", nil
+	}
+
+	gomock.InOrder(
+		s.mockNamespaces.EXPECT().Get(gomock.Any(), s.getNamespace(), v1.GetOptions{}).Times(2).
+			Return(nil, s.k8sNotFoundError()),
+	)
+	s.setupBroker(c, ctrl, testing.ControllerTag.Id(), newK8sClientFunc, newK8sRestFunc, randomPrefixFunc).Finish()
 }
 
 func (s *K8sBrokerSuite) TestFileSetToVolumeFiles(c *gc.C) {
@@ -927,12 +974,12 @@ func (s *K8sBrokerSuite) TestFileSetToVolumeNonFiles(c *gc.C) {
 				VolumeSource: specs.VolumeSource{
 					ConfigMap: &specs.ResourceRefVol{
 						Name:        "log-config",
-						DefaultMode: int32Ptr(511),
+						DefaultMode: pointer.Int32Ptr(511),
 						Files: []specs.FileRef{
 							{
 								Key:  "log_level",
 								Path: "log_level",
-								Mode: int32Ptr(511),
+								Mode: pointer.Int32Ptr(511),
 							},
 						},
 					},
@@ -947,12 +994,12 @@ func (s *K8sBrokerSuite) TestFileSetToVolumeNonFiles(c *gc.C) {
 							LocalObjectReference: core.LocalObjectReference{
 								Name: "log-config",
 							},
-							DefaultMode: int32Ptr(511),
+							DefaultMode: pointer.Int32Ptr(511),
 							Items: []core.KeyToPath{
 								{
 									Key:  "log_level",
 									Path: "log_level",
-									Mode: int32Ptr(511),
+									Mode: pointer.Int32Ptr(511),
 								},
 							},
 						},
@@ -967,12 +1014,12 @@ func (s *K8sBrokerSuite) TestFileSetToVolumeNonFiles(c *gc.C) {
 				VolumeSource: specs.VolumeSource{
 					ConfigMap: &specs.ResourceRefVol{
 						Name:        "non-existing-config-map",
-						DefaultMode: int32Ptr(511),
+						DefaultMode: pointer.Int32Ptr(511),
 						Files: []specs.FileRef{
 							{
 								Key:  "log_level",
 								Path: "log_level",
-								Mode: int32Ptr(511),
+								Mode: pointer.Int32Ptr(511),
 							},
 						},
 					},
@@ -989,12 +1036,12 @@ func (s *K8sBrokerSuite) TestFileSetToVolumeNonFiles(c *gc.C) {
 				VolumeSource: specs.VolumeSource{
 					Secret: &specs.ResourceRefVol{
 						Name:        "mysecret2",
-						DefaultMode: int32Ptr(511),
+						DefaultMode: pointer.Int32Ptr(511),
 						Files: []specs.FileRef{
 							{
 								Key:  "password",
 								Path: "my-group/my-password",
-								Mode: int32Ptr(511),
+								Mode: pointer.Int32Ptr(511),
 							},
 						},
 					},
@@ -1007,12 +1054,12 @@ func (s *K8sBrokerSuite) TestFileSetToVolumeNonFiles(c *gc.C) {
 					VolumeSource: core.VolumeSource{
 						Secret: &core.SecretVolumeSource{
 							SecretName:  "mysecret2",
-							DefaultMode: int32Ptr(511),
+							DefaultMode: pointer.Int32Ptr(511),
 							Items: []core.KeyToPath{
 								{
 									Key:  "password",
 									Path: "my-group/my-password",
-									Mode: int32Ptr(511),
+									Mode: pointer.Int32Ptr(511),
 								},
 							},
 						},
@@ -1027,12 +1074,12 @@ func (s *K8sBrokerSuite) TestFileSetToVolumeNonFiles(c *gc.C) {
 				VolumeSource: specs.VolumeSource{
 					Secret: &specs.ResourceRefVol{
 						Name:        "non-existing-secret",
-						DefaultMode: int32Ptr(511),
+						DefaultMode: pointer.Int32Ptr(511),
 						Files: []specs.FileRef{
 							{
 								Key:  "password",
 								Path: "my-group/my-password",
-								Mode: int32Ptr(511),
+								Mode: pointer.Int32Ptr(511),
 							},
 						},
 					},
@@ -1141,8 +1188,8 @@ func (s *K8sBrokerSuite) TestConfigurePodFiles(c *gc.C) {
 			Ports:           []core.ContainerPort{{ContainerPort: int32(80), Protocol: core.ProtocolTCP}},
 			ImagePullPolicy: core.PullAlways,
 			SecurityContext: &core.SecurityContext{
-				RunAsNonRoot: boolPtr(true),
-				Privileged:   boolPtr(true),
+				RunAsNonRoot: pointer.BoolPtr(true),
+				Privileged:   pointer.BoolPtr(true),
 			},
 			ReadinessProbe: &core.Probe{
 				InitialDelaySeconds: 10,
@@ -1162,9 +1209,9 @@ func (s *K8sBrokerSuite) TestConfigurePodFiles(c *gc.C) {
 			Ports: []core.ContainerPort{{ContainerPort: int32(8080), Protocol: core.ProtocolTCP}},
 			// Defaults since not specified.
 			SecurityContext: &core.SecurityContext{
-				RunAsNonRoot:             boolPtr(false),
-				ReadOnlyRootFilesystem:   boolPtr(false),
-				AllowPrivilegeEscalation: boolPtr(true),
+				RunAsNonRoot:             pointer.BoolPtr(false),
+				ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+				AllowPrivilegeEscalation: pointer.BoolPtr(true),
 			},
 			VolumeMounts: dataVolumeMounts(),
 		},
@@ -1206,8 +1253,8 @@ func (s *K8sBrokerSuite) TestConfigurePodFiles(c *gc.C) {
 			Ports:           []core.ContainerPort{{ContainerPort: int32(80), Protocol: core.ProtocolTCP}},
 			ImagePullPolicy: core.PullAlways,
 			SecurityContext: &core.SecurityContext{
-				RunAsNonRoot: boolPtr(true),
-				Privileged:   boolPtr(true),
+				RunAsNonRoot: pointer.BoolPtr(true),
+				Privileged:   pointer.BoolPtr(true),
 			},
 			ReadinessProbe: &core.Probe{
 				InitialDelaySeconds: 10,
@@ -1231,9 +1278,9 @@ func (s *K8sBrokerSuite) TestConfigurePodFiles(c *gc.C) {
 			Ports: []core.ContainerPort{{ContainerPort: int32(8080), Protocol: core.ProtocolTCP}},
 			// Defaults since not specified.
 			SecurityContext: &core.SecurityContext{
-				RunAsNonRoot:             boolPtr(false),
-				ReadOnlyRootFilesystem:   boolPtr(false),
-				AllowPrivilegeEscalation: boolPtr(true),
+				RunAsNonRoot:             pointer.BoolPtr(false),
+				ReadOnlyRootFilesystem:   pointer.BoolPtr(false),
+				AllowPrivilegeEscalation: pointer.BoolPtr(true),
 			},
 			VolumeMounts: append(dataVolumeMounts(), []core.VolumeMount{
 				{Name: "myhostpath", MountPath: "/host/etc/cni/net.d"},
@@ -1276,7 +1323,7 @@ func (s *K8sBrokerSuite) TestBootstrapNoOperatorStorage(c *gc.C) {
 	ctrl := s.setupController(c)
 	defer ctrl.Finish()
 
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	callCtx := &context.CloudCallContext{}
 	bootstrapParams := environs.BootstrapParams{
 		ControllerConfig:         testing.FakeControllerConfig(),
@@ -1297,7 +1344,7 @@ func (s *K8sBrokerSuite) TestBootstrap(c *gc.C) {
 	// Ensure the broker is configured with operator storage.
 	s.setupOperatorStorageConfig(c)
 
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	callCtx := &context.CloudCallContext{}
 	bootstrapParams := environs.BootstrapParams{
 		ControllerConfig:         testing.FakeControllerConfig(),
@@ -1359,7 +1406,7 @@ func (s *K8sBrokerSuite) TestPrepareForBootstrap(c *gc.C) {
 		s.mockStorageClass.EXPECT().Get(gomock.Any(), "some-storage", v1.GetOptions{}).
 			Return(sc, nil),
 	)
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	c.Assert(
 		s.broker.PrepareForBootstrap(ctx, "ctrl-1"), jc.ErrorIsNil,
 	)
@@ -1376,7 +1423,7 @@ func (s *K8sBrokerSuite) TestPrepareForBootstrapAlreadyExistNamespaceError(c *gc
 		s.mockNamespaces.EXPECT().Get(gomock.Any(), "controller-ctrl-1", v1.GetOptions{}).
 			Return(ns, nil),
 	)
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	c.Assert(
 		s.broker.PrepareForBootstrap(ctx, "ctrl-1"), jc.Satisfies, errors.IsAlreadyExists,
 	)
@@ -1394,7 +1441,7 @@ func (s *K8sBrokerSuite) TestPrepareForBootstrapAlreadyExistControllerAnnotation
 		s.mockNamespaces.EXPECT().List(gomock.Any(), v1.ListOptions{}).
 			Return(&core.NamespaceList{Items: []core.Namespace{*ns}}, nil),
 	)
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapContext(stdcontext.TODO(), c)
 	c.Assert(
 		s.broker.PrepareForBootstrap(ctx, "ctrl-1"), jc.Satisfies, errors.IsAlreadyExists,
 	)
@@ -1472,14 +1519,14 @@ func (s *K8sBrokerSuite) assertDestroy(c *gc.C, isController bool, destroyFunc f
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
 													Type:    "integer",
-													Minimum: float64Ptr(1),
+													Minimum: pointer.Float64Ptr(1),
 												},
 											},
 										},
 										"PS": {
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
-													Type: "integer", Minimum: float64Ptr(1),
+													Type: "integer", Minimum: pointer.Float64Ptr(1),
 												},
 											},
 										},
@@ -1487,8 +1534,8 @@ func (s *K8sBrokerSuite) assertDestroy(c *gc.C, isController bool, destroyFunc f
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
 													Type:    "integer",
-													Minimum: float64Ptr(1),
-													Maximum: float64Ptr(1),
+													Minimum: pointer.Float64Ptr(1),
+													Maximum: pointer.Float64Ptr(1),
 												},
 											},
 										},
@@ -1529,14 +1576,14 @@ func (s *K8sBrokerSuite) assertDestroy(c *gc.C, isController bool, destroyFunc f
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
 													Type:    "integer",
-													Minimum: float64Ptr(1),
+													Minimum: pointer.Float64Ptr(1),
 												},
 											},
 										},
 										"PS": {
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
-													Type: "integer", Minimum: float64Ptr(1),
+													Type: "integer", Minimum: pointer.Float64Ptr(1),
 												},
 											},
 										},
@@ -1544,8 +1591,8 @@ func (s *K8sBrokerSuite) assertDestroy(c *gc.C, isController bool, destroyFunc f
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
 													Type:    "integer",
-													Minimum: float64Ptr(1),
-													Maximum: float64Ptr(1),
+													Minimum: pointer.Float64Ptr(1),
+													Maximum: pointer.Float64Ptr(1),
 												},
 											},
 										},
@@ -1733,12 +1780,12 @@ func (s *K8sBrokerSuite) assertDestroy(c *gc.C, isController bool, destroyFunc f
 
 func (s *K8sBrokerSuite) TestDestroyController(c *gc.C) {
 	s.assertDestroy(c, true, func() error {
-		return s.broker.DestroyController(context.NewCloudCallContext(), testing.ControllerTag.Id())
+		return s.broker.DestroyController(context.NewEmptyCloudCallContext(), testing.ControllerTag.Id())
 	})
 }
 
 func (s *K8sBrokerSuite) TestDestroy(c *gc.C) {
-	s.assertDestroy(c, false, func() error { return s.broker.Destroy(context.NewCloudCallContext()) })
+	s.assertDestroy(c, false, func() error { return s.broker.Destroy(context.NewEmptyCloudCallContext()) })
 }
 
 func (s *K8sBrokerSuite) TestGetCurrentNamespace(c *gc.C) {
@@ -1807,7 +1854,7 @@ func unitStatefulSetArg(numUnits int32, scName string, podSpec core.PodSpec) *ap
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					Labels: map[string]string{"app.kubernetes.io/name": "app-name"},
@@ -1869,14 +1916,14 @@ func (s *K8sBrokerSuite) TestDeleteServiceForApplication(c *gc.C) {
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
 													Type:    "integer",
-													Minimum: float64Ptr(1),
+													Minimum: pointer.Float64Ptr(1),
 												},
 											},
 										},
 										"PS": {
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
-													Type: "integer", Minimum: float64Ptr(1),
+													Type: "integer", Minimum: pointer.Float64Ptr(1),
 												},
 											},
 										},
@@ -1884,8 +1931,8 @@ func (s *K8sBrokerSuite) TestDeleteServiceForApplication(c *gc.C) {
 											Properties: map[string]apiextensionsv1.JSONSchemaProps{
 												"replicas": {
 													Type:    "integer",
-													Minimum: float64Ptr(1),
-													Maximum: float64Ptr(1),
+													Minimum: pointer.Float64Ptr(1),
+													Maximum: pointer.Float64Ptr(1),
 												},
 											},
 										},
@@ -2116,7 +2163,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceNoStorage(c *gc.C) {
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -2230,7 +2277,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDeploymentWithUpdateStrategy(c *gc.
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -2429,7 +2476,7 @@ password: shhhh`[1:],
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -2477,7 +2524,7 @@ password: shhhh`[1:],
 				"cloud.google.com/load-balancer-type": "Internal",
 			}},
 		Spec: core.ServiceSpec{
-			Selector: utils.LabelForKeyValue("app", "MyApp"),
+			Selector: k8sutils.LabelForKeyValue("app", "MyApp"),
 			Type:     core.ServiceTypeLoadBalancer,
 			Ports: []core.ServicePort{
 				{
@@ -2678,7 +2725,7 @@ password: shhhh`[1:],
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -2727,7 +2774,7 @@ password: shhhh`[1:],
 				"cloud.google.com/load-balancer-type": "Internal",
 			}},
 		Spec: core.ServiceSpec{
-			Selector: utils.LabelForKeyValue("app", "MyApp"),
+			Selector: k8sutils.LabelForKeyValue("app", "MyApp"),
 			Type:     core.ServiceTypeLoadBalancer,
 			Ports: []core.ServicePort{
 				{
@@ -2808,8 +2855,6 @@ password: shhhh`[1:],
 		// ensure configmaps.
 		s.mockConfigMaps.EXPECT().Create(gomock.Any(), cm, v1.CreateOptions{}).
 			Return(nil, s.k8sAlreadyExistsError()),
-		s.mockConfigMaps.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name"}).
-			Return(&core.ConfigMapList{Items: []core.ConfigMap{*cm}}, nil),
 		s.mockConfigMaps.EXPECT().Update(gomock.Any(), cm, v1.UpdateOptions{}).
 			Return(cm, nil),
 
@@ -2907,9 +2952,9 @@ func (s *K8sBrokerSuite) assertGetService(c *gc.C, mode caas.DeploymentMode, exp
 		selectorLabels = map[string]string{
 			"app.kubernetes.io/managed-by": "juju", "operator.juju.is/name": "app-name", "operator.juju.is/target": "application"}
 	}
-	labels := utils.LabelsMerge(selectorLabels, utils.LabelsJuju)
+	labels := k8sutils.LabelsMerge(selectorLabels, k8sutils.LabelsJuju)
 
-	selector := utils.LabelsToSelector(labels).String()
+	selector := k8sutils.LabelsToSelector(labels).String()
 	svc := core.Service{
 		ObjectMeta: v1.ObjectMeta{
 			Name:   "app-name",
@@ -2929,13 +2974,37 @@ func (s *K8sBrokerSuite) assertGetService(c *gc.C, mode caas.DeploymentMode, exp
 			LoadBalancerIP: "10.0.0.1",
 			ExternalName:   "ext-name",
 		},
+		Status: core.ServiceStatus{
+			LoadBalancer: core.LoadBalancerStatus{
+				Ingress: []core.LoadBalancerIngress{{
+					Hostname: "host.com.au",
+				}},
+			},
+		},
 	}
 	svc.SetUID("uid-xxxxx")
-
+	svcHeadless := core.Service{
+		ObjectMeta: v1.ObjectMeta{
+			Name:   "app-name-endpoints",
+			Labels: labels,
+			Annotations: map[string]string{
+				"juju.io/controller": testing.ControllerTag.Id(),
+				"fred":               "mary",
+				"a":                  "b",
+			}},
+		Spec: core.ServiceSpec{
+			Selector: labels,
+			Type:     core.ServiceTypeClusterIP,
+			Ports: []core.ServicePort{
+				{Port: 80, TargetPort: intstr.FromInt(80), Protocol: "TCP"},
+			},
+			ClusterIP: "192.168.1.1",
+		},
+	}
 	gomock.InOrder(
 		append([]*gomock.Call{
 			s.mockServices.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: selector}).
-				Return(&core.ServiceList{Items: []core.Service{svc}}, nil),
+				Return(&core.ServiceList{Items: []core.Service{svcHeadless, svc}}, nil),
 
 			s.mockStatefulSets.EXPECT().Get(gomock.Any(), "juju-operator-app-name", v1.GetOptions{}).
 				Return(nil, s.k8sNotFoundError()),
@@ -2956,6 +3025,7 @@ func (s *K8sBrokerSuite) TestGetServiceSvcFoundNoWorkload(c *gc.C) {
 			Id: "uid-xxxxx",
 			Addresses: network.ProviderAddresses{
 				network.NewProviderAddress("10.0.0.1", network.WithScope(network.ScopePublic)),
+				network.NewProviderAddress("host.com.au", network.WithScope(network.ScopePublic)),
 			},
 		},
 		s.mockStatefulSets.EXPECT().Get(gomock.Any(), "app-name", v1.GetOptions{}).
@@ -3046,9 +3116,10 @@ func (s *K8sBrokerSuite) assertGetServiceSvcFoundWithStatefulSet(c *gc.C, mode c
 			Id: "uid-xxxxx",
 			Addresses: network.ProviderAddresses{
 				network.NewProviderAddress("10.0.0.1", network.WithScope(network.ScopePublic)),
+				network.NewProviderAddress("host.com.au", network.WithScope(network.ScopePublic)),
 			},
-			Scale:      intPtr(2),
-			Generation: int64Ptr(1),
+			Scale:      k8sutils.IntPtr(2),
+			Generation: pointer.Int64Ptr(1),
 			Status: status.StatusInfo{
 				Status: status.Active,
 			},
@@ -3137,9 +3208,10 @@ func (s *K8sBrokerSuite) assertGetServiceSvcFoundWithDeployment(c *gc.C, mode ca
 			Id: "uid-xxxxx",
 			Addresses: network.ProviderAddresses{
 				network.NewProviderAddress("10.0.0.1", network.WithScope(network.ScopePublic)),
+				network.NewProviderAddress("host.com.au", network.WithScope(network.ScopePublic)),
 			},
-			Scale:      intPtr(2),
-			Generation: int64Ptr(1),
+			Scale:      k8sutils.IntPtr(2),
+			Generation: pointer.Int64Ptr(1),
 			Status: status.StatusInfo{
 				Status: status.Active,
 			},
@@ -3200,9 +3272,10 @@ func (s *K8sBrokerSuite) TestGetServiceSvcFoundWithDaemonSet(c *gc.C) {
 			Id: "uid-xxxxx",
 			Addresses: network.ProviderAddresses{
 				network.NewProviderAddress("10.0.0.1", network.WithScope(network.ScopePublic)),
+				network.NewProviderAddress("host.com.au", network.WithScope(network.ScopePublic)),
 			},
-			Scale:      intPtr(2),
-			Generation: int64Ptr(1),
+			Scale:      k8sutils.IntPtr(2),
+			Generation: pointer.Int64Ptr(1),
 			Status: status.StatusInfo{
 				Status: status.Active,
 			},
@@ -3247,7 +3320,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceNoStorageStateful(c *gc.C) {
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					Labels: map[string]string{"app.kubernetes.io/name": "app-name"},
@@ -3331,7 +3404,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceCustomType(c *gc.C) {
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					Labels: map[string]string{"app.kubernetes.io/name": "app-name"},
@@ -3463,7 +3536,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewRoleCreate(c *gc.
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -3511,7 +3584,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewRoleCreate(c *gc.
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	role := &rbacv1.Role{
 		ObjectMeta: v1.ObjectMeta{
@@ -3623,7 +3696,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewRoleUpdate(c *gc.
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -3671,7 +3744,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewRoleUpdate(c *gc.
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	role := &rbacv1.Role{
 		ObjectMeta: v1.ObjectMeta{
@@ -3786,7 +3859,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleCreate
 	podSpec := getBasicPodspec()
 	podSpec.ServiceAccount = &specs.PrimeServiceAccountSpecV3{
 		ServiceAccountSpecV3: specs.ServiceAccountSpecV3{
-			AutomountServiceAccountToken: boolPtr(true),
+			AutomountServiceAccountToken: pointer.BoolPtr(true),
 			Roles: []specs.Role{
 				{
 					Global: true,
@@ -3821,7 +3894,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleCreate
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -3869,7 +3942,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleCreate
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	cr := &rbacv1.ClusterRole{
 		ObjectMeta: v1.ObjectMeta{
@@ -3917,10 +3990,16 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleCreate
 		s.mockStatefulSets.EXPECT().Get(gomock.Any(), "juju-operator-app-name", v1.GetOptions{}).
 			Return(nil, s.k8sNotFoundError()),
 		s.mockServiceAccounts.EXPECT().Create(gomock.Any(), svcAccount, v1.CreateOptions{}).Return(svcAccount, nil),
-		s.mockClusterRoles.EXPECT().Create(gomock.Any(), cr, v1.CreateOptions{}).Return(cr, nil),
-		s.mockClusterRoleBindings.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name,model.juju.is/name=test"}).
-			Return(&rbacv1.ClusterRoleBindingList{Items: []rbacv1.ClusterRoleBinding{}}, nil),
-		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb, v1.CreateOptions{}).Return(crb, nil),
+		s.mockClusterRoles.EXPECT().Get(gomock.Any(), cr.Name, gomock.Any()).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoles.EXPECT().Patch(
+			gomock.Any(), cr.Name, types.StrategicMergePatchType, gomock.Any(), v1.PatchOptions{FieldManager: "juju"},
+		).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoles.EXPECT().Create(gomock.Any(), cr, gomock.Any()).Return(cr, nil),
+		s.mockClusterRoleBindings.EXPECT().Get(gomock.Any(), crb.Name, gomock.Any()).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Patch(
+			gomock.Any(), crb.Name, types.StrategicMergePatchType, gomock.Any(), v1.PatchOptions{FieldManager: "juju"},
+		).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb, gomock.Any()).Return(crb, nil),
 		s.mockSecrets.EXPECT().Create(gomock.Any(), secretArg, v1.CreateOptions{}).Return(secretArg, nil),
 		s.mockStatefulSets.EXPECT().Get(gomock.Any(), "app-name", v1.GetOptions{}).
 			Return(nil, s.k8sNotFoundError()),
@@ -3962,7 +4041,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleUpdate
 	podSpec := getBasicPodspec()
 	podSpec.ServiceAccount = &specs.PrimeServiceAccountSpecV3{
 		ServiceAccountSpecV3: specs.ServiceAccountSpecV3{
-			AutomountServiceAccountToken: boolPtr(true),
+			AutomountServiceAccountToken: pointer.BoolPtr(true),
 			Roles: []specs.Role{
 				{
 					Global: true,
@@ -3997,7 +4076,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleUpdate
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -4045,7 +4124,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleUpdate
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	cr := &rbacv1.ClusterRole{
 		ObjectMeta: v1.ObjectMeta{
@@ -4087,7 +4166,6 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleUpdate
 			},
 		},
 	}
-	crbUID := crb.GetUID()
 
 	secretArg := s.getOCIImageSecret(c, map[string]string{"fred": "mary"})
 	gomock.InOrder(
@@ -4097,16 +4175,13 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleUpdate
 		s.mockServiceAccounts.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name"}).
 			Return(&core.ServiceAccountList{Items: []core.ServiceAccount{*svcAccount}}, nil),
 		s.mockServiceAccounts.EXPECT().Update(gomock.Any(), svcAccount, v1.UpdateOptions{}).Return(svcAccount, nil),
-		s.mockClusterRoles.EXPECT().Create(gomock.Any(), cr, v1.CreateOptions{}).Return(nil, s.k8sAlreadyExistsError()),
-		s.mockClusterRoles.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name,model.juju.is/name=test"}).
-			Return(&rbacv1.ClusterRoleList{Items: []rbacv1.ClusterRole{*cr}}, nil),
-		s.mockClusterRoles.EXPECT().Update(gomock.Any(), cr, v1.UpdateOptions{}).Return(cr, nil),
-		s.mockClusterRoleBindings.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name,model.juju.is/name=test"}).
-			Return(&rbacv1.ClusterRoleBindingList{Items: []rbacv1.ClusterRoleBinding{*crb}}, nil),
-		s.mockClusterRoleBindings.EXPECT().Delete(gomock.Any(), "app-name-test-app-name", s.deleteOptions(v1.DeletePropagationForeground, crbUID)).Return(nil),
-		s.mockClusterRoleBindings.EXPECT().Get(gomock.Any(), "app-name-test-app-name", v1.GetOptions{}).Return(crb, nil),
-		s.mockClusterRoleBindings.EXPECT().Get(gomock.Any(), "app-name-test-app-name", v1.GetOptions{}).Return(nil, s.k8sNotFoundError()),
-		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb, v1.CreateOptions{}).Return(crb, nil),
+		s.mockClusterRoles.EXPECT().Get(gomock.Any(), cr.Name, gomock.Any()).Return(cr, nil),
+		s.mockClusterRoles.EXPECT().Update(gomock.Any(), cr, gomock.Any()).Return(cr, nil),
+		s.mockClusterRoleBindings.EXPECT().Get(gomock.Any(), crb.Name, gomock.Any()).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Patch(
+			gomock.Any(), crb.Name, types.StrategicMergePatchType, gomock.Any(), v1.PatchOptions{FieldManager: "juju"},
+		).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb, gomock.Any()).Return(crb, nil),
 		s.mockSecrets.EXPECT().Create(gomock.Any(), secretArg, v1.CreateOptions{}).Return(secretArg, nil),
 		s.mockStatefulSets.EXPECT().Get(gomock.Any(), "app-name", v1.GetOptions{}).
 			Return(nil, s.k8sNotFoundError()),
@@ -4142,8 +4217,6 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountNewClusterRoleUpdate
 			"kubernetes-service-annotations":     map[string]interface{}{"a": "b"},
 		})
 	}()
-	err = s.clock.WaitAdvance(2*time.Second, testing.LongWait, 1)
-	c.Assert(err, jc.ErrorIsNil)
 
 	select {
 	case err := <-errChan:
@@ -4168,7 +4241,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 						Name: "sa2",
 						ServiceAccountSpecV3: specs.ServiceAccountSpecV3{
 
-							AutomountServiceAccountToken: boolPtr(true),
+							AutomountServiceAccountToken: pointer.BoolPtr(true),
 							Roles: []specs.Role{
 								{
 									Name: "role2",
@@ -4207,7 +4280,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -4255,7 +4328,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	role1 := &rbacv1.Role{
 		ObjectMeta: v1.ObjectMeta{
@@ -4308,7 +4381,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	role2 := &rbacv1.Role{
 		ObjectMeta: v1.ObjectMeta{
@@ -4416,7 +4489,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 					{
 						Name: "sa2",
 						ServiceAccountSpecV3: specs.ServiceAccountSpecV3{
-							AutomountServiceAccountToken: boolPtr(true),
+							AutomountServiceAccountToken: pointer.BoolPtr(true),
 							Roles: []specs.Role{
 								{
 									Name:   "cluster-role2",
@@ -4467,7 +4540,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -4515,7 +4588,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	role1 := &rbacv1.Role{
 		ObjectMeta: v1.ObjectMeta{
@@ -4568,7 +4641,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	clusterrole2 := &rbacv1.ClusterRole{
 		ObjectMeta: v1.ObjectMeta{
@@ -4633,10 +4706,13 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 		s.mockRoleBindings.EXPECT().Create(gomock.Any(), rb1, v1.CreateOptions{}).Return(rb1, nil),
 
 		s.mockServiceAccounts.EXPECT().Create(gomock.Any(), svcAccount2, v1.CreateOptions{}).Return(svcAccount2, nil),
-		s.mockClusterRoles.EXPECT().Create(gomock.Any(), clusterrole2, v1.CreateOptions{}).Return(clusterrole2, nil),
-		s.mockClusterRoleBindings.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name,model.juju.is/name=test"}).
-			Return(&rbacv1.ClusterRoleBindingList{Items: []rbacv1.ClusterRoleBinding{}}, nil),
-		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb2, v1.CreateOptions{}).Return(crb2, nil),
+		s.mockClusterRoles.EXPECT().Get(gomock.Any(), clusterrole2.Name, gomock.Any()).Return(clusterrole2, nil),
+		s.mockClusterRoles.EXPECT().Update(gomock.Any(), clusterrole2, gomock.Any()).Return(clusterrole2, nil),
+		s.mockClusterRoleBindings.EXPECT().Get(gomock.Any(), crb2.Name, gomock.Any()).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Patch(
+			gomock.Any(), crb2.Name, types.StrategicMergePatchType, gomock.Any(), v1.PatchOptions{FieldManager: "juju"},
+		).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb2, gomock.Any()).Return(crb2, nil),
 
 		s.mockSecrets.EXPECT().Create(gomock.Any(), secretArg, v1.CreateOptions{}).Return(secretArg, nil),
 		s.mockStatefulSets.EXPECT().Get(gomock.Any(), "app-name", v1.GetOptions{}).
@@ -4686,7 +4762,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 					{
 						Name: "sa-foo",
 						ServiceAccountSpecV3: specs.ServiceAccountSpecV3{
-							AutomountServiceAccountToken: boolPtr(true),
+							AutomountServiceAccountToken: pointer.BoolPtr(true),
 							Roles: []specs.Role{
 								{
 									Global: true,
@@ -4745,7 +4821,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -4793,7 +4869,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	role1 := &rbacv1.Role{
 		ObjectMeta: v1.ObjectMeta{
@@ -4846,7 +4922,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			},
 		},
-		AutomountServiceAccountToken: boolPtr(true),
+		AutomountServiceAccountToken: pointer.BoolPtr(true),
 	}
 	clusterrole2 := &rbacv1.ClusterRole{
 		ObjectMeta: v1.ObjectMeta{
@@ -4955,10 +5031,13 @@ func (s *K8sBrokerSuite) TestEnsureServiceWithServiceAccountAndK8sServiceAccount
 		s.mockRoleBindings.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name"}).
 			Return(&rbacv1.RoleBindingList{Items: []rbacv1.RoleBinding{}}, nil),
 		s.mockRoleBindings.EXPECT().Create(gomock.Any(), rb2, v1.CreateOptions{}).Return(rb2, nil),
-		s.mockClusterRoles.EXPECT().Create(gomock.Any(), clusterrole2, v1.CreateOptions{}).Return(clusterrole2, nil),
-		s.mockClusterRoleBindings.EXPECT().List(gomock.Any(), v1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=juju,app.kubernetes.io/name=app-name,model.juju.is/name=test"}).
-			Return(&rbacv1.ClusterRoleBindingList{Items: []rbacv1.ClusterRoleBinding{}}, nil),
-		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb2, v1.CreateOptions{}).Return(crb2, nil),
+		s.mockClusterRoles.EXPECT().Get(gomock.Any(), clusterrole2.Name, gomock.Any()).Return(clusterrole2, nil),
+		s.mockClusterRoles.EXPECT().Update(gomock.Any(), clusterrole2, gomock.Any()).Return(clusterrole2, nil),
+		s.mockClusterRoleBindings.EXPECT().Get(gomock.Any(), crb2.Name, gomock.Any()).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Patch(
+			gomock.Any(), crb2.Name, types.StrategicMergePatchType, gomock.Any(), v1.PatchOptions{FieldManager: "juju"},
+		).Return(nil, s.k8sNotFoundError()),
+		s.mockClusterRoleBindings.EXPECT().Create(gomock.Any(), crb2, gomock.Any()).Return(crb2, nil),
 
 		s.mockSecrets.EXPECT().Create(gomock.Any(), secretArg, v1.CreateOptions{}).Return(secretArg, nil),
 		s.mockStatefulSets.EXPECT().Get(gomock.Any(), "app-name", v1.GetOptions{}).
@@ -5100,7 +5179,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForStatefulSetWithUpdateStrategy(c *gc
 		UpdateStrategy: &specs.UpdateStrategy{
 			Type: "RollingUpdate",
 			RollingUpdate: &specs.RollingUpdateSpec{
-				Partition: int32Ptr(10),
+				Partition: pointer.Int32Ptr(10),
 			},
 		},
 	}
@@ -5128,7 +5207,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForStatefulSetWithUpdateStrategy(c *gc
 	statefulSetArg.Spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{
 		Type: appsv1.RollingUpdateStatefulSetStrategyType,
 		RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
-			Partition: int32Ptr(10),
+			Partition: pointer.Int32Ptr(10),
 		},
 	}
 
@@ -5228,7 +5307,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDeploymentWithDevices(c *gc.C) {
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -5315,7 +5394,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDeploymentWithStorageCreate(c *gc.C
 			},
 		},
 		Spec: core.PersistentVolumeClaimSpec{
-			StorageClassName: strPtr("workload-storage"),
+			StorageClassName: pointer.StringPtr("workload-storage"),
 			Resources: core.ResourceRequirements{
 				Requests: core.ResourceList{
 					core.ResourceStorage: resource.MustParse("100Mi"),
@@ -5356,7 +5435,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDeploymentWithStorageCreate(c *gc.C
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -5463,7 +5542,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDeploymentWithStorageUpdate(c *gc.C
 			},
 		},
 		Spec: core.PersistentVolumeClaimSpec{
-			StorageClassName: strPtr("workload-storage"),
+			StorageClassName: pointer.StringPtr("workload-storage"),
 			Resources: core.ResourceRequirements{
 				Requests: core.ResourceList{
 					core.ResourceStorage: resource.MustParse("100Mi"),
@@ -5504,7 +5583,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDeploymentWithStorageUpdate(c *gc.C
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -5673,7 +5752,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithStorageCreate(c *gc.C)
 			},
 		},
 		Spec: core.PersistentVolumeClaimSpec{
-			StorageClassName: strPtr("workload-storage"),
+			StorageClassName: pointer.StringPtr("workload-storage"),
 			Resources: core.ResourceRequirements{
 				Requests: core.ResourceList{
 					core.ResourceStorage: resource.MustParse("100Mi"),
@@ -5713,7 +5792,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithStorageCreate(c *gc.C)
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -5851,7 +5930,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithUpdateStrategy(c *gc.C
 			},
 		},
 		Spec: core.PersistentVolumeClaimSpec{
-			StorageClassName: strPtr("workload-storage"),
+			StorageClassName: pointer.StringPtr("workload-storage"),
 			Resources: core.ResourceRequirements{
 				Requests: core.ResourceList{
 					core.ResourceStorage: resource.MustParse("100Mi"),
@@ -5891,7 +5970,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithUpdateStrategy(c *gc.C
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -6024,7 +6103,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithStorageUpdate(c *gc.C)
 			},
 		},
 		Spec: core.PersistentVolumeClaimSpec{
-			StorageClassName: strPtr("workload-storage"),
+			StorageClassName: pointer.StringPtr("workload-storage"),
 			Resources: core.ResourceRequirements{
 				Requests: core.ResourceList{
 					core.ResourceStorage: resource.MustParse("100Mi"),
@@ -6064,7 +6143,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithStorageUpdate(c *gc.C)
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -6207,7 +6286,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithDevicesAndConstraintsC
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -6324,7 +6403,7 @@ func (s *K8sBrokerSuite) TestEnsureServiceForDaemonSetWithDevicesAndConstraintsU
 			Selector: &v1.LabelSelector{
 				MatchLabels: map[string]string{"app.kubernetes.io/name": "app-name"},
 			},
-			RevisionHistoryLimit: int32Ptr(0),
+			RevisionHistoryLimit: pointer.Int32Ptr(0),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: "app-name-",
@@ -7393,7 +7472,7 @@ func (s *K8sBrokerSuite) TestUpdateStrategyForDaemonSet(c *gc.C) {
 	_, err = provider.UpdateStrategyForDaemonSet(specs.UpdateStrategy{
 		Type: "RollingUpdate",
 		RollingUpdate: &specs.RollingUpdateSpec{
-			Partition: int32Ptr(10),
+			Partition: pointer.Int32Ptr(10),
 		},
 	})
 	c.Assert(err, gc.ErrorMatches, `rolling update spec for daemonset not valid`)
@@ -7461,7 +7540,7 @@ func (s *K8sBrokerSuite) TestUpdateStrategyForDeployment(c *gc.C) {
 	_, err = provider.UpdateStrategyForDeployment(specs.UpdateStrategy{
 		Type: "RollingUpdate",
 		RollingUpdate: &specs.RollingUpdateSpec{
-			Partition:      int32Ptr(10),
+			Partition:      pointer.Int32Ptr(10),
 			MaxUnavailable: &specs.IntOrString{IntVal: 10},
 		},
 	})
@@ -7525,7 +7604,7 @@ func (s *K8sBrokerSuite) TestUpdateStrategyForStatefulSet(c *gc.C) {
 	_, err = provider.UpdateStrategyForStatefulSet(specs.UpdateStrategy{
 		Type: "RollingUpdate",
 		RollingUpdate: &specs.RollingUpdateSpec{
-			Partition: int32Ptr(10),
+			Partition: pointer.Int32Ptr(10),
 			MaxSurge:  &specs.IntOrString{IntVal: 10},
 		},
 	})
@@ -7534,7 +7613,7 @@ func (s *K8sBrokerSuite) TestUpdateStrategyForStatefulSet(c *gc.C) {
 	_, err = provider.UpdateStrategyForStatefulSet(specs.UpdateStrategy{
 		Type: "RollingUpdate",
 		RollingUpdate: &specs.RollingUpdateSpec{
-			Partition:      int32Ptr(10),
+			Partition:      pointer.Int32Ptr(10),
 			MaxUnavailable: &specs.IntOrString{IntVal: 10},
 		},
 	})
@@ -7551,7 +7630,7 @@ func (s *K8sBrokerSuite) TestUpdateStrategyForStatefulSet(c *gc.C) {
 	_, err = provider.UpdateStrategyForStatefulSet(specs.UpdateStrategy{
 		Type: "OnDelete",
 		RollingUpdate: &specs.RollingUpdateSpec{
-			Partition: int32Ptr(10),
+			Partition: pointer.Int32Ptr(10),
 		},
 	})
 	c.Assert(err, gc.ErrorMatches, `rolling update spec is not supported for "OnDelete"`)
@@ -7559,14 +7638,14 @@ func (s *K8sBrokerSuite) TestUpdateStrategyForStatefulSet(c *gc.C) {
 	o, err = provider.UpdateStrategyForStatefulSet(specs.UpdateStrategy{
 		Type: "RollingUpdate",
 		RollingUpdate: &specs.RollingUpdateSpec{
-			Partition: int32Ptr(10),
+			Partition: pointer.Int32Ptr(10),
 		},
 	})
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(o, jc.DeepEquals, appsv1.StatefulSetUpdateStrategy{
 		Type: appsv1.RollingUpdateStatefulSetStrategyType,
 		RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
-			Partition: int32Ptr(10),
+			Partition: pointer.Int32Ptr(10),
 		},
 	})
 }
@@ -7584,7 +7663,7 @@ func (s *K8sBrokerSuite) TestExposeServiceIngressClassProvided(c *gc.C) {
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			}},
 		Spec: core.ServiceSpec{
-			Selector: utils.LabelForKeyValue("app", "gitlab"),
+			Selector: k8sutils.LabelForKeyValue("app", "gitlab"),
 			Type:     core.ServiceTypeClusterIP,
 			Ports: []core.ServicePort{
 				{
@@ -7657,7 +7736,7 @@ func (s *K8sBrokerSuite) TestExposeServiceGetDefaultIngressClassFromResource(c *
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			}},
 		Spec: core.ServiceSpec{
-			Selector: utils.LabelForKeyValue("app", "gitlab"),
+			Selector: k8sutils.LabelForKeyValue("app", "gitlab"),
 			Type:     core.ServiceTypeClusterIP,
 			Ports: []core.ServicePort{
 				{
@@ -7682,7 +7761,7 @@ func (s *K8sBrokerSuite) TestExposeServiceGetDefaultIngressClassFromResource(c *
 			},
 		},
 		Spec: networkingv1.IngressSpec{
-			IngressClassName: strPtr("foo"),
+			IngressClassName: pointer.StringPtr("foo"),
 			Rules: []networkingv1.IngressRule{{
 				Host: "172.0.0.1.xip.io",
 				IngressRuleValue: networkingv1.IngressRuleValue{
@@ -7741,7 +7820,7 @@ func (s *K8sBrokerSuite) TestExposeServiceGetDefaultIngressClass(c *gc.C) {
 				"controller.juju.is/id": testing.ControllerTag.Id(),
 			}},
 		Spec: core.ServiceSpec{
-			Selector: utils.LabelForKeyValue("app", "gitlab"),
+			Selector: k8sutils.LabelForKeyValue("app", "gitlab"),
 			Type:     core.ServiceTypeClusterIP,
 			Ports: []core.ServicePort{
 				{

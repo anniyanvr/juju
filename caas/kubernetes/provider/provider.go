@@ -4,7 +4,9 @@
 package provider
 
 import (
+	stdcontext "context"
 	"net/url"
+	osexec "os/exec"
 
 	jujuclock "github.com/juju/clock"
 	"github.com/juju/errors"
@@ -45,7 +47,7 @@ var providerInstance = kubernetesEnvironProvider{
 	cmdRunner:          defaultRunner{},
 	builtinCloudGetter: attemptMicroK8sCloud,
 	brokerGetter: func(args environs.OpenParams) (k8s.ClusterMetadataChecker, error) {
-		broker, err := caas.New(args)
+		broker, err := caas.New(stdcontext.TODO(), args)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -66,12 +68,17 @@ func (kubernetesEnvironProvider) Version() int {
 // CommandRunner allows to run commands on the underlying system
 type CommandRunner interface {
 	RunCommands(run exec.RunParams) (*exec.ExecResponse, error)
+	LookPath(string) (string, error)
 }
 
 type defaultRunner struct{}
 
 func (defaultRunner) RunCommands(run exec.RunParams) (*exec.ExecResponse, error) {
 	return exec.RunCommands(run)
+}
+
+func (defaultRunner) LookPath(file string) (string, error) {
+	return osexec.LookPath(file)
 }
 
 // NewK8sClients returns the k8s clients to access a cluster.
@@ -164,15 +171,17 @@ func (p kubernetesEnvironProvider) Open(args environs.OpenParams) (caas.Broker, 
 		return broker, nil
 	}
 
-	ns, err := controllerCorelation(broker)
+	ns, err := findControllerNamespace(
+		broker.client(), args.ControllerUUID)
 	if errors.IsNotFound(err) {
+		// The controller is currently bootstrapping.
 		return broker, nil
 	} else if err != nil {
-		return broker, err
+		return nil, err
 	}
 
 	return newK8sBroker(
-		args.ControllerUUID, k8sRestConfig, args.Config, ns,
+		args.ControllerUUID, k8sRestConfig, args.Config, ns.Name,
 		NewK8sClients, newRestClient, k8swatcher.NewKubernetesNotifyWatcher, k8swatcher.NewKubernetesStringsWatcher,
 		utils.RandomPrefix, jujuclock.WallClock)
 }

@@ -51,7 +51,6 @@ type ProvisionerAPI struct {
 	*common.ModelWatcher
 	*common.ModelMachinesWatcher
 	*common.InstanceIdGetter
-	*common.ToolsFinder
 	*common.ToolsGetter
 	*networkingcommon.NetworkConfigAPI
 
@@ -65,6 +64,7 @@ type ProvisionerAPI struct {
 	getAuthFunc             common.GetAuthFunc
 	getCanModify            common.GetAuthFunc
 	providerCallContext     context.ProviderCallContext
+	toolsFinder             *common.ToolsFinder
 
 	// Used for MaybeWriteLXDProfile()
 	mu sync.Mutex
@@ -134,7 +134,7 @@ func NewProvisionerAPI(ctx facade.Context) (*ProvisionerAPI, error) {
 		return nil, errors.Annotate(err, "instantiating network config API")
 	}
 
-	urlGetter := common.NewToolsURLGetter(model.UUID(), st)
+	urlGetter := common.NewToolsURLGetter(model.UUID(), ctx.StatePool().SystemState())
 	callCtx := context.CallContext(st)
 	resources := ctx.Resources()
 	api := &ProvisionerAPI{
@@ -168,7 +168,7 @@ func NewProvisionerAPI(ctx facade.Context) (*ProvisionerAPI, error) {
 		return environs.GetEnviron(configGetter, environs.New)
 	}
 	api.InstanceIdGetter = common.NewInstanceIdGetter(st, getAuthFunc)
-	api.ToolsFinder = common.NewToolsFinder(configGetter, st, urlGetter, newEnviron)
+	api.toolsFinder = common.NewToolsFinder(configGetter, st, urlGetter, newEnviron)
 	api.ToolsGetter = common.NewToolsGetter(st, configGetter, st, urlGetter, getAuthOwner, newEnviron)
 	return api, nil
 }
@@ -673,6 +673,11 @@ func (api *ProvisionerAPI) Constraints(args params.Entities) (params.Constraints
 		result.Results[i].Error = apiservererrors.ServerError(err)
 	}
 	return result, nil
+}
+
+// FindTools returns a List containing all tools matching the given parameters.
+func (api *ProvisionerAPI) FindTools(args params.FindToolsParams) (params.FindToolsResult, error) {
+	return api.toolsFinder.FindTools(args)
 }
 
 // SetInstanceInfo sets the provider specific machine id, nonce,

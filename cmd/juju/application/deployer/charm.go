@@ -428,11 +428,11 @@ func (c *repositoryCharm) String() string {
 // then deploys it.
 func (c *repositoryCharm) PrepareAndDeploy(ctx *cmd.Context, deployAPI DeployerAPI, resolver Resolver, macaroonGetter store.MacaroonGetter) error {
 	userRequestedURL := c.userRequestedURL
-	location := "hub"
+	location := "charmhub"
 	if charm.CharmStore.Matches(userRequestedURL.Schema) {
-		location = "store"
+		location = "charm-store"
 	}
-	ctx.Verbosef("Preparing to deploy %q from the charm-%s", userRequestedURL.Name, location)
+	ctx.Verbosef("Preparing to deploy %q from the %s", userRequestedURL.Name, location)
 
 	// resolver.resolve potentially updates the series of anything
 	// passed in. Store this for use in seriesSelector.
@@ -452,7 +452,7 @@ func (c *repositoryCharm) PrepareAndDeploy(ctx *cmd.Context, deployAPI DeployerA
 	// Charm or bundle has been supplied as a URL so we resolve and
 	// deploy using the store but pass in the origin command line
 	// argument so users can target a specific origin.
-	storeCharmOrBundleURL, origin, supportedSeries, err := resolver.ResolveCharm(userRequestedURL, c.origin)
+	storeCharmOrBundleURL, origin, supportedSeries, err := resolver.ResolveCharm(userRequestedURL, c.origin, false) // no --switch possible.
 	if charm.IsUnsupportedSeriesError(err) {
 		return errors.Errorf("%v. Use --force to deploy the charm anyway.", err)
 	} else if err != nil {
@@ -474,6 +474,7 @@ func (c *repositoryCharm) PrepareAndDeploy(ctx *cmd.Context, deployAPI DeployerA
 
 	// Get the series to use.
 	series, err := selector.charmSeries()
+	logger.Tracef("Using series %s from %v to deploy %v", series, supportedSeries, userRequestedURL)
 
 	// Avoid deploying charm if it's not valid for the model.
 	// We check this first before possibly suggesting --force.
@@ -491,7 +492,7 @@ func (c *repositoryCharm) PrepareAndDeploy(ctx *cmd.Context, deployAPI DeployerA
 	}
 
 	// Ensure we save the origin.
-	c.origin = origin
+	c.origin = origin.WithSeries(series)
 
 	// In-order for the url to represent the following updates to the the origin
 	// and machine, we need to ensure that the series is actually correct as
@@ -552,9 +553,11 @@ func formatLocatedText(curl *charm.URL, origin commoncharm.Origin) string {
 	if repository == "" || repository == commoncharm.OriginLocal {
 		return fmt.Sprintf("Located local charm %q, revision %d", curl.Name, curl.Revision)
 	}
-	var revision string
+	var next string
 	if curl.Revision != -1 {
-		revision = fmt.Sprintf(", revision %d", curl.Revision)
+		next = fmt.Sprintf(", revision %d", curl.Revision)
+	} else if str := origin.CharmChannel().String(); str != "" {
+		next = fmt.Sprintf(", channel %s", str)
 	}
-	return fmt.Sprintf("Located charm %q in %s%s", curl.Name, repository, revision)
+	return fmt.Sprintf("Located charm %q in %s%s", curl.Name, repository, next)
 }

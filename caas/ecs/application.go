@@ -19,6 +19,7 @@ import (
 	"github.com/juju/collections/set"
 	"github.com/juju/errors"
 	"github.com/juju/names/v4"
+	"github.com/juju/version/v2"
 	"github.com/kr/pretty"
 
 	"github.com/juju/juju/caas"
@@ -507,6 +508,12 @@ func computeStatus(ctx context.Context, t *ecs.Task) (statusMessage string, juju
 	return statusMessage, jujuStatus, since
 }
 
+// Service returns the service associated with the application.
+func (a *app) Service() (*caas.Service, error) {
+	// TODO
+	return nil, errors.NotImplementedf("Service")
+}
+
 // Units of the application fetched from kubernetes by matching pod labels.
 func (a *app) Units() (units []caas.Unit, err error) {
 	ctx := context.Background()
@@ -713,4 +720,8 @@ func (a *app) Scale(scaleTo int) error {
 
 func (a *app) Trust(bool) error {
 	return errors.NotImplementedf("trust with ecs")
+}
+
+func (a *app) Upgrade(ver version.Number) error {
+	return errors.NotImplementedf("upgrade with ecs")
 }

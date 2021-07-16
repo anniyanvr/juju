@@ -4,6 +4,7 @@
 package environs
 
 import (
+	stdcontext "context"
 	"io"
 
 	"github.com/juju/jsonschema"
@@ -65,7 +66,7 @@ type CloudEnvironProvider interface {
 	//
 	// Open should not perform any expensive operations, such as querying
 	// the cloud API, as it will be called frequently.
-	Open(OpenParams) (Environ, error)
+	Open(stdcontext.Context, OpenParams) (Environ, error)
 }
 
 // OpenParams contains the parameters for EnvironProvider.Open.
@@ -122,7 +123,10 @@ type ProviderCredentials interface {
 	//
 	// If no credentials can be detected, DetectCredentials should
 	// return an error satisfying errors.IsNotFound.
-	DetectCredentials() (*cloud.CloudCredential, error)
+	//
+	// If cloud name is not passed (empty-string), all credentials are
+	// returned, otherwise only the credential for that cloud.
+	DetectCredentials(cloudName string) (*cloud.CloudCredential, error)
 
 	// FinalizeCredential finalizes a credential, updating any attributes
 	// as necessary. This is always done client-side, when adding the
@@ -276,15 +280,15 @@ type ConfigSetter interface {
 
 // CloudSpecSetter implements access to an environment's cloud spec.
 type CloudSpecSetter interface {
-	// SetConfig updates the Environ's configuration.
-	SetCloudSpec(spec environscloudspec.CloudSpec) error
+	// SetCloudSpec updates the Environ's configuration.
+	SetCloudSpec(ctx stdcontext.Context, spec environscloudspec.CloudSpec) error
 }
 
 // Bootstrapper provides the way for bootstrapping controller.
 type Bootstrapper interface {
-	// This will be called very early in the bootstrap procedure, to
-	// give an Environ a chance to perform interactive operations that
-	// are required for bootstrapping.
+	// PrepareForBootstrap will be called very early in the bootstrap
+	// procedure to give an Environ a chance to perform interactive
+	// operations that are required for bootstrapping.
 	PrepareForBootstrap(ctx BootstrapContext, controllerName string) error
 
 	// Bootstrap creates a new environment, and an instance to host the
@@ -319,7 +323,7 @@ type BootstrapEnviron interface {
 	CloudDestroyer
 	ControllerDestroyer
 
-	// Environ implements storage.ProviderRegistry for acquiring
+	// ProviderRegistry is implemented in order to acquire
 	// environ-scoped storage providers supported by the Environ.
 	// StorageProviders returned from Environ.StorageProvider will
 	// be scoped specifically to that Environ.

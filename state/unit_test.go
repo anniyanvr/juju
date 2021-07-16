@@ -2155,6 +2155,51 @@ func (s *UnitSuite) TestPrincipalName(c *gc.C) {
 	c.Assert(principal, gc.Equals, "")
 }
 
+func (s *UnitSuite) TestConstraintsDefaultArchNotRelevant(c *gc.C) {
+	app := s.Factory.MakeApplication(c, &factory.ApplicationParams{
+		Name: "app",
+		CharmOrigin: &state.CharmOrigin{Platform: &state.Platform{
+			Architecture: "arm64",
+		}},
+	})
+	err := app.SetConstraints(constraints.MustParse("instance-type=big"))
+	c.Assert(err, jc.ErrorIsNil)
+	unit0, err := app.AddUnit(state.AddUnitParams{})
+	c.Assert(err, jc.ErrorIsNil)
+	cons, err := unit0.Constraints()
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(cons.String(), gc.Equals, "instance-type=big")
+
+	app = s.Factory.MakeApplication(c, &factory.ApplicationParams{
+		Name: "app2",
+		CharmOrigin: &state.CharmOrigin{Platform: &state.Platform{
+			Architecture: "arm64",
+		}},
+		Constraints: constraints.MustParse("arch=s390x"),
+	})
+	unit1, err := app.AddUnit(state.AddUnitParams{})
+	c.Assert(err, jc.ErrorIsNil)
+	cons, err = unit1.Constraints()
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(cons.String(), gc.Equals, "arch=s390x")
+}
+
+func (s *UnitSuite) TestConstraintsDefaultArch(c *gc.C) {
+	app := s.Factory.MakeApplication(c, &factory.ApplicationParams{
+		Name: "app",
+		CharmOrigin: &state.CharmOrigin{Platform: &state.Platform{
+			Architecture: "arm64",
+		}},
+	})
+	err := app.SetConstraints(constraints.MustParse("mem=4G"))
+	c.Assert(err, jc.ErrorIsNil)
+	unit0, err := app.AddUnit(state.AddUnitParams{})
+	c.Assert(err, jc.ErrorIsNil)
+	cons, err := unit0.Constraints()
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(cons.String(), gc.Equals, "arch=arm64 mem=4096M")
+}
+
 func (s *UnitSuite) TestRelations(c *gc.C) {
 	wordpress0 := s.unit
 	mysql := s.AddTestingApplication(c, "mysql", s.AddTestingCharm(c, "mysql"))
@@ -2518,9 +2563,9 @@ snapshot:
 
 	for i, t := range tests {
 		c.Logf("running test %d", i)
-		operationID, err := s.Model.EnqueueOperation("a test")
+		operationID, err := s.Model.EnqueueOperation("a test", 1)
 		c.Assert(err, jc.ErrorIsNil)
-		action, err := unit1.AddAction(operationID, t.actionName, t.givenPayload, nil, nil)
+		action, err := s.Model.AddAction(unit1, operationID, t.actionName, t.givenPayload, nil, nil)
 		if t.errString != "" {
 			c.Assert(err, gc.ErrorMatches, t.errString)
 		} else {
@@ -2529,6 +2574,16 @@ snapshot:
 			c.Assert(state.ActionOperationId(action), gc.Equals, operationID)
 		}
 	}
+}
+
+func (s *UnitSuite) TestAddActionWithError(c *gc.C) {
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
+	c.Assert(err, jc.ErrorIsNil)
+	_, err = s.Model.AddAction(s.unit, operationID, "benchmark", nil, nil, nil)
+	c.Assert(err, gc.ErrorMatches, `action "benchmark" not defined on unit "wordpress/0"`)
+	op, err := s.Model.Operation(operationID)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(op.Status(), gc.Equals, state.ActionError)
 }
 
 func (s *UnitSuite) TestUnitActionsFindsRightActions(c *gc.C) {
@@ -2551,18 +2606,18 @@ action-b-b:
 	c.Assert(err, jc.ErrorIsNil)
 
 	// Add 3 actions to first unit, and 2 to the second unit
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 5)
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = unit1.AddAction(operationID, "action-a-a", nil, nil, nil)
+	_, err = s.Model.AddAction(unit1, operationID, "action-a-a", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = unit1.AddAction(operationID, "action-a-b", nil, nil, nil)
+	_, err = s.Model.AddAction(unit1, operationID, "action-a-b", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = unit1.AddAction(operationID, "action-a-c", nil, nil, nil)
+	_, err = s.Model.AddAction(unit1, operationID, "action-a-c", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
-	_, err = unit2.AddAction(operationID, "action-b-a", nil, nil, nil)
+	_, err = s.Model.AddAction(unit2, operationID, "action-b-a", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
-	_, err = unit2.AddAction(operationID, "action-b-b", nil, nil, nil)
+	_, err = s.Model.AddAction(unit2, operationID, "action-b-b", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	// Verify that calling Actions on unit1 returns only
@@ -2674,8 +2729,8 @@ func (s *UnitSuite) TestWatchMachineAndEndpointAddressesHash(c *gc.C) {
 	)
 	c.Assert(err, gc.IsNil)
 	err = m1.SetDevicesAddresses(
-		state.LinkLayerDeviceAddress{DeviceName: "enp5s0", CIDRAddress: "10.0.0.1/24", ConfigMethod: network.StaticAddress},
-		state.LinkLayerDeviceAddress{DeviceName: "enp5s1", CIDRAddress: "10.0.254.42/24", ConfigMethod: network.StaticAddress},
+		state.LinkLayerDeviceAddress{DeviceName: "enp5s0", CIDRAddress: "10.0.0.1/24", ConfigMethod: network.ConfigStatic},
+		state.LinkLayerDeviceAddress{DeviceName: "enp5s1", CIDRAddress: "10.0.254.42/24", ConfigMethod: network.ConfigStatic},
 	)
 	c.Assert(err, gc.IsNil)
 
@@ -2704,7 +2759,7 @@ func (s *UnitSuite) TestWatchMachineAndEndpointAddressesHash(c *gc.C) {
 	err = m1.SetDevicesAddresses(state.LinkLayerDeviceAddress{
 		DeviceName:   "enp5s0",
 		CIDRAddress:  "10.0.0.100/24",
-		ConfigMethod: network.StaticAddress,
+		ConfigMethod: network.ConfigStatic,
 	})
 	c.Assert(err, gc.IsNil)
 	err = m1.SetProviderAddresses(network.NewSpaceAddress("10.0.0.100"))
@@ -3103,9 +3158,9 @@ func (s *CAASUnitSuite) TestWatchServiceAddressesHash(c *gc.C) {
 func (s *CAASUnitSuite) TestOperatorAddAction(c *gc.C) {
 	unit, err := s.operatorApp.AddUnit(state.AddUnitParams{})
 	c.Assert(err, jc.ErrorIsNil)
-	operationID, err := s.Model.EnqueueOperation("a test")
+	operationID, err := s.Model.EnqueueOperation("a test", 1)
 	c.Assert(err, jc.ErrorIsNil)
-	action, err := unit.AddAction(operationID, "snapshot", nil, nil, nil)
+	action, err := s.Model.AddAction(unit, operationID, "snapshot", nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(action.Parameters(), jc.DeepEquals, map[string]interface{}{
 		"outfile": "abcd", "workload-context": false,

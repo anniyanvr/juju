@@ -31,16 +31,16 @@ func init() {
 	simplestreams.RegisterStructTags(OvaFileMetadata{})
 }
 
-func findImageMetadata(env environs.Environ, args environs.StartInstanceParams) (*OvaFileMetadata, error) {
-	arches := args.Tools.Arches()
+func findImageMetadata(env environs.Environ, arches []string, series string) (*OvaFileMetadata, error) {
 	ic := &imagemetadata.ImageConstraint{
 		LookupParams: simplestreams.LookupParams{
-			Releases: []string{args.InstanceConfig.Series},
+			Releases: []string{series},
 			Arches:   arches,
 			Stream:   env.Config().ImageStream(),
 		},
 	}
-	sources, err := environs.ImageMetadataSources(env)
+	ss := simplestreams.NewSimpleStreams(simplestreams.DefaultDataSourceFactory())
+	sources, err := environs.ImageMetadataSources(env, ss)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -66,7 +66,8 @@ func imageMetadataFetch(sources []simplestreams.DataSource, cons *imagemetadata.
 			ValueTemplate: OvaFileMetadata{},
 		},
 	}
-	items, _, err := simplestreams.GetMetadata(sources, params)
+	ss := simplestreams.NewSimpleStreams(simplestreams.DefaultDataSourceFactory())
+	items, _, err := ss.GetMetadata(sources, params)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

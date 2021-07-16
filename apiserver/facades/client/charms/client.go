@@ -11,6 +11,7 @@ import (
 	"github.com/juju/charm/v9"
 	"github.com/juju/collections/set"
 	"github.com/juju/errors"
+	"github.com/juju/http/v2"
 	"github.com/juju/juju/state"
 	"github.com/juju/mgo/v2"
 	"github.com/juju/names/v4"
@@ -45,6 +46,7 @@ type API struct {
 	getStrategyFunc      func(source string) StrategyFunc
 	newStorage           func(modelUUID string, session *mgo.Session) storage.Storage
 	tag                  names.ModelTag
+	httpClient           http.HTTPClient
 }
 
 type APIv2 struct {
@@ -123,6 +125,8 @@ func NewFacadeV4(ctx facade.Context) (*API, error) {
 		return nil, errors.Trace(err)
 	}
 
+	httpTransport := charmhub.RequestHTTPTransport(ctx.RequestRecorder(), charmhub.DefaultRetryPolicy())
+
 	return &API{
 		CharmsAPI:            commonCharmsAPI,
 		authorizer:           authorizer,
@@ -132,9 +136,13 @@ func NewFacadeV4(ctx facade.Context) (*API, error) {
 		getStrategyFunc:      getStrategyFunc,
 		newStorage:           storage.NewStorage,
 		tag:                  m.ModelTag(),
+		httpClient:           httpTransport(logger),
 	}, nil
 }
 
+// NewCharmsAPI is only used for testing.
+// TODO (stickupkid): We should use the latest NewFacadeV4 to better exercise
+// the API.
 func NewCharmsAPI(
 	authorizer facade.Authorizer,
 	st charmsinterfaces.BackendState,
@@ -151,6 +159,7 @@ func NewCharmsAPI(
 		getStrategyFunc:      getStrategyFunc,
 		newStorage:           newStorage,
 		tag:                  m.ModelTag(),
+		httpClient:           charmhub.DefaultHTTPTransport(logger),
 	}, nil
 }
 
@@ -245,12 +254,7 @@ func (a *API) getDefaultArch() (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-
-	if cons.HasArch() {
-		return *cons.Arch, nil
-	}
-
-	return arch.DefaultArchitecture, nil
+	return arch.ConstraintArch(cons, nil), nil
 }
 
 func normalizeCharmOrigin(origin params.CharmOrigin, fallbackArch string) (params.CharmOrigin, error) {
@@ -510,7 +514,7 @@ func (a *API) resolveOneCharm(arg params.ResolveCharmWithChannel, mac *macaroon.
 	}
 
 	// Validate the origin passed in.
-	if err := validateOrigin(arg.Origin, curl.Schema); err != nil {
+	if err := validateOrigin(arg.Origin, curl.Schema, arg.SwitchCharm); err != nil {
 		result.Error = apiservererrors.ServerError(err)
 		return result
 	}
@@ -544,11 +548,7 @@ func (a *API) resolveOneCharm(arg params.ResolveCharmWithChannel, mac *macaroon.
 			result.Error = apiservererrors.ServerError(err)
 			return result
 		}
-		if cons.HasArch() {
-			archOrigin.Architecture = *cons.Arch
-		} else {
-			archOrigin.Architecture = arch.DefaultArchitecture
-		}
+		archOrigin.Architecture = arch.ConstraintArch(cons, nil)
 	}
 
 	result.Origin = archOrigin
@@ -563,12 +563,18 @@ func (a *API) resolveOneCharm(arg params.ResolveCharmWithChannel, mac *macaroon.
 	return result
 }
 
-func validateOrigin(origin params.CharmOrigin, schema string) error {
-	if (corecharm.Local.Matches(origin.Source) && !charm.Local.Matches(schema)) ||
-		(corecharm.CharmStore.Matches(origin.Source) && !charm.CharmStore.Matches(schema)) ||
-		(corecharm.CharmHub.Matches(origin.Source) && !charm.CharmHub.Matches(schema)) {
-		return errors.NotValidf("origin source %q with schema", origin.Source)
+func validateOrigin(origin params.CharmOrigin, schema string, switchCharm bool) error {
+	// If we are switching to a different charm we can skip the following
+	// origin check; doing so allows us to switch from a charmstore charm
+	// to the equivalent charmhub charm.
+	if !switchCharm {
+		if (corecharm.Local.Matches(origin.Source) && !charm.Local.Matches(schema)) ||
+			(corecharm.CharmStore.Matches(origin.Source) && !charm.CharmStore.Matches(schema)) ||
+			(corecharm.CharmHub.Matches(origin.Source) && !charm.CharmHub.Matches(schema)) {
+			return errors.NotValidf("origin source %q with schema", origin.Source)
+		}
 	}
+
 	if corecharm.CharmHub.Matches(origin.Source) && origin.Architecture == "" {
 		return errors.NotValidf("empty architecture")
 	}
@@ -631,12 +637,20 @@ func (a *API) charmHubRepository() (corecharm.Repository, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	clientLogger := logger.Child("client")
+	options := []charmhub.Option{
+		charmhub.WithHTTPTransport(func(charmhub.Logger) charmhub.Transport {
+			return a.httpClient
+		}),
+	}
+
 	var chCfg charmhub.Config
 	chURL, ok := cfg.CharmHubURL()
 	if ok {
-		chCfg, err = charmhub.CharmHubConfigFromURL(chURL, logger.Child("client"))
+		chCfg, err = charmhub.CharmHubConfigFromURL(chURL, clientLogger, options...)
 	} else {
-		chCfg, err = charmhub.CharmHubConfig(logger.Child("client"))
+		chCfg, err = charmhub.CharmHubConfig(clientLogger, options...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

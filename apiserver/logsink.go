@@ -174,7 +174,21 @@ func (s *agentLoggingStrategy) WriteLog(m params.LogRecord) error {
 		Location: m.Location,
 		Level:    level,
 		Message:  m.Message,
+		Labels:   m.Labels,
 	}}), "logging to DB failed")
+
+	// If the log entries cannot be inserted to the DB log out an error
+	// to let users know. See LP1930899.
+	if dbErr != nil {
+		// If this fails then the next logToFile will fail as well; no
+		// need to check for errors here.
+		_ = logToFile(s.fileLogger, s.filePrefix, params.LogRecord{
+			Time:    time.Now(),
+			Module:  "juju.apiserver",
+			Level:   loggo.ERROR.String(),
+			Message: errors.Annotate(dbErr, "unable to persist log entry to the database").Error(),
+		})
+	}
 
 	m.Entity = s.entity
 	fileErr := errors.Annotate(
@@ -200,6 +214,7 @@ func logToFile(writer io.Writer, prefix string, m params.LogRecord) error {
 		m.Module,
 		m.Location,
 		m.Message,
+		strings.Join(m.Labels, ","),
 	}, " ") + "\n"))
 	return err
 }

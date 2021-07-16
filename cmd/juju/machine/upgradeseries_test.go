@@ -11,6 +11,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/juju/cmd"
 	"github.com/juju/cmd/cmdtesting"
+	"github.com/juju/errors"
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
 
@@ -36,11 +37,18 @@ func (s *UpgradeSeriesSuite) SetUpTest(c *gc.C) {
 		status: &params.FullStatus{
 			Machines: map[string]params.MachineStatus{
 				"1": {Id: "1"},
+				"2": {
+					Id: "2",
+					Containers: map[string]params.MachineStatus{
+						"2/lxd/0": {Id: "2/lxd/0"},
+					},
+				},
 			},
 			Applications: map[string]params.ApplicationStatus{
 				"foo": {
 					Units: map[string]params.UnitStatus{
 						"foo/1": {Machine: "1"},
+						"foo/2": {Machine: "2/lxd/0"},
 					},
 				},
 			},
@@ -50,17 +58,19 @@ func (s *UpgradeSeriesSuite) SetUpTest(c *gc.C) {
 	s.completeExpectation = &upgradeSeriesCompleteExpectation{gomock.Any()}
 }
 
-const machineArg = "1"
-const seriesArg = "xenial"
+const (
+	machineArg   = "1"
+	containerArg = "2/lxd/0"
+
+	seriesArg = "xenial"
+)
 
 func (s *UpgradeSeriesSuite) runUpgradeSeriesCommand(c *gc.C, args ...string) error {
 	_, err := s.runUpgradeSeriesCommandWithConfirmation(c, "y", args...)
 	return err
 }
 
-func (s *UpgradeSeriesSuite) runUpgradeSeriesCommandWithConfirmation(
-	c *gc.C, confirmation string, args ...string,
-) (*cmd.Context, error) {
+func (s *UpgradeSeriesSuite) ctxWithConfirmation(c *gc.C, confirmation string) *cmd.Context {
 	var stdin, stdout, stderr bytes.Buffer
 	ctx, err := cmd.DefaultContext()
 	c.Assert(err, jc.ErrorIsNil)
@@ -68,6 +78,14 @@ func (s *UpgradeSeriesSuite) runUpgradeSeriesCommandWithConfirmation(
 	ctx.Stdout = &stdout
 	ctx.Stdin = &stdin
 	stdin.WriteString(confirmation)
+
+	return ctx
+}
+
+func (s *UpgradeSeriesSuite) runUpgradeSeriesCommandWithConfirmation(
+	c *gc.C, confirmation string, args ...string,
+) (*cmd.Context, error) {
+	ctx := s.ctxWithConfirmation(c, confirmation)
 
 	ctrl := gomock.NewController(c)
 	defer ctrl.Finish()
@@ -84,7 +102,7 @@ func (s *UpgradeSeriesSuite) runUpgradeSeriesCommandWithConfirmation(
 
 	com := machine.NewUpgradeSeriesCommandForTest(mockStatusAPI, mockUpgradeSeriesAPI)
 
-	err = cmdtesting.InitCommand(com, args)
+	err := cmdtesting.InitCommand(com, args)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +113,15 @@ func (s *UpgradeSeriesSuite) runUpgradeSeriesCommandWithConfirmation(
 	return ctx, nil
 }
 
-func (s *UpgradeSeriesSuite) TestPrepareCommand(c *gc.C) {
+func (s *UpgradeSeriesSuite) TestPrepareCommandMachines(c *gc.C) {
 	s.prepareExpectation = &upgradeSeriesPrepareExpectation{machineArg, seriesArg, gomock.Eq(false)}
 	err := s.runUpgradeSeriesCommand(c, machineArg, machine.PrepareCommand, seriesArg)
+	c.Assert(err, jc.ErrorIsNil)
+}
+
+func (s *UpgradeSeriesSuite) TestPrepareCommandContainers(c *gc.C) {
+	s.prepareExpectation = &upgradeSeriesPrepareExpectation{containerArg, seriesArg, gomock.Eq(false)}
+	err := s.runUpgradeSeriesCommand(c, containerArg, machine.PrepareCommand, seriesArg)
 	c.Assert(err, jc.ErrorIsNil)
 }
 
@@ -151,6 +175,31 @@ func (s *UpgradeSeriesSuite) TestCompleteCommand(c *gc.C) {
 func (s *UpgradeSeriesSuite) TestCompleteCommandDoesNotAcceptSeries(c *gc.C) {
 	err := s.runUpgradeSeriesCommand(c, machineArg, machine.CompleteCommand, seriesArg)
 	c.Assert(err, gc.ErrorMatches, "wrong number of arguments")
+}
+
+func (s *UpgradeSeriesSuite) TestCompleteCommandWithUnsupportedError(c *gc.C) {
+	ctx := s.ctxWithConfirmation(c, "y")
+
+	ctrl := gomock.NewController(c)
+	defer ctrl.Finish()
+
+	mockStatusAPI := mocks.NewMockStatusAPI(ctrl)
+	mockUpgradeSeriesAPI := mocks.NewMockUpgradeMachineSeriesAPI(ctrl)
+
+	uExp := mockUpgradeSeriesAPI.EXPECT()
+	prep := s.prepareExpectation
+	uExp.UpgradeSeriesPrepare(prep.machineArg, prep.seriesArg, prep.force).Return(errors.NotSupportedf("bad"))
+
+	mockStatusAPI.EXPECT().Status(gomock.Nil()).AnyTimes().Return(s.statusExpectation.status, nil)
+
+	com := machine.NewUpgradeSeriesCommandForTest(mockStatusAPI, mockUpgradeSeriesAPI)
+
+	err := cmdtesting.InitCommand(com, []string{"1", machine.PrepareCommand, seriesArg})
+	c.Assert(err, jc.ErrorIsNil)
+
+	err = com.Run(ctx)
+	c.Assert(err, gc.ErrorMatches, `upgrade-series is not supported.
+Please upgrade your controller to perform the operation.`)
 }
 
 func (s *UpgradeSeriesSuite) TestPrepareCommandShouldAcceptYes(c *gc.C) {

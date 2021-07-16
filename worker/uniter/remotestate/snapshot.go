@@ -89,11 +89,16 @@ type Snapshot struct {
 	// executed by this unit.
 	Commands []string
 
-	// UpgradeSeriesStatus is the preparation status of any currently running
-	// series upgrade
+	// UpgradeSeriesStatus is the preparation status of
+	// any currently running series upgrade.
 	UpgradeSeriesStatus model.UpgradeSeriesStatus
 
-	// ContainerRunningStatus is set on CAAS models for remote init/upgrade of charm.
+	// UpgradeSeriesTarget is the OS series that an in-flight
+	// series upgrade is transitioning to.
+	UpgradeSeriesTarget string
+
+	// ContainerRunningStatus is set on CAAS models
+	// for remote init/upgrade of charm.
 	ContainerRunningStatus *ContainerRunningStatus
 
 	// LXDProfileName is the name of the lxd profile applied to the unit's
@@ -106,6 +111,10 @@ type Snapshot struct {
 	// WorkloadEvents is a list of IDs of workload events that need to be
 	// processed.
 	WorkloadEvents []string
+
+	// Shutdown is true on CAAS sidecar applications when SIGTERM is recevied
+	// but the unit isn't going to die, just a uniter restart/pod reschedule.
+	Shutdown bool
 }
 
 // RelationSnapshot tracks the state of a relationship from the viewpoint of the local unit.

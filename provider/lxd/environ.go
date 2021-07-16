@@ -4,6 +4,7 @@
 package lxd
 
 import (
+	stdcontext "context"
 	"strings"
 	"sync"
 
@@ -32,6 +33,8 @@ type baseProvider interface {
 }
 
 type environ struct {
+	environs.NoSpaceDiscoveryEnviron
+
 	cloud    environscloudspec.CloudSpec
 	provider *environProvider
 
@@ -76,7 +79,7 @@ func newEnviron(
 	}
 	env.base = common.DefaultProvider{Env: env}
 
-	err = env.SetCloudSpec(spec)
+	err = env.SetCloudSpec(stdcontext.TODO(), spec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -148,7 +151,7 @@ func (env *environ) SetConfig(cfg *config.Config) error {
 }
 
 // SetCloudSpec is specified in the environs.Environ interface.
-func (env *environ) SetCloudSpec(spec environscloudspec.CloudSpec) error {
+func (env *environ) SetCloudSpec(_ stdcontext.Context, spec environscloudspec.CloudSpec) error {
 	env.lock.Lock()
 	defer env.lock.Unlock()
 
@@ -157,6 +160,11 @@ func (env *environ) SetCloudSpec(spec environscloudspec.CloudSpec) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	if project := env.ecfgUnlocked.project(); project != "" {
+		server.UseProject(project)
+	}
+
 	env.serverUnlocked = server
 	return env.initProfile()
 }

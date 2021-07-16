@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/juju/errors"
 	"github.com/juju/names/v4"
 	jc "github.com/juju/testing/checkers"
 	"github.com/juju/version/v2"
@@ -460,6 +461,19 @@ func (*suite) TestWriteAndRead(c *gc.C) {
 	c.Assert(reread, jc.DeepEquals, conf)
 }
 
+func (*suite) TestParseConfigData(c *gc.C) {
+	testParams := attributeParams
+	testParams.Paths.DataDir = c.MkDir()
+	testParams.Paths.LogDir = c.MkDir()
+	conf, err := agent.NewAgentConfig(testParams)
+	c.Assert(err, jc.ErrorIsNil)
+	data, err := conf.Render()
+	c.Assert(err, jc.ErrorIsNil)
+	reread, err := agent.ParseConfigData(data)
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(reread, jc.DeepEquals, conf)
+}
+
 func (*suite) TestAPIInfoMissingAddress(c *gc.C) {
 	conf := agent.EmptyConfig()
 	_, ok := conf.APIInfo()
@@ -519,7 +533,7 @@ func (*suite) TestPromotedMongoInfo(c *gc.C) {
 	conf, err := agent.NewAgentConfig(attrParams)
 	c.Assert(err, jc.ErrorIsNil)
 
-	mongoInfo, ok := conf.MongoInfo()
+	_, ok := conf.MongoInfo()
 	c.Assert(ok, jc.IsFalse)
 
 	// Promote the agent to a controller by
@@ -528,7 +542,7 @@ func (*suite) TestPromotedMongoInfo(c *gc.C) {
 	// to use MongoInfo.
 	conf.SetStateServingInfo(stateServingInfo())
 
-	mongoInfo, ok = conf.MongoInfo()
+	mongoInfo, ok := conf.MongoInfo()
 	c.Assert(ok, jc.IsTrue)
 	c.Check(mongoInfo.Info.Addrs, jc.DeepEquals, []string{"localhost:69", "3.4.2.1:69"})
 	c.Check(mongoInfo.Info.DisableTLS, jc.IsFalse)
@@ -654,6 +668,14 @@ func (*suite) TestSetAPIHostPorts(c *gc.C) {
 		"0.4.0.1:4444",
 		"elsewhere.net:4444",
 	})
+}
+
+func (*suite) TestSetAPIHostPortsErrorOnEmpty(c *gc.C) {
+	conf, err := agent.NewAgentConfig(attributeParams)
+	c.Assert(err, jc.ErrorIsNil)
+
+	err = conf.SetAPIHostPorts([]network.HostPorts{})
+	c.Assert(err, jc.Satisfies, errors.IsBadRequest)
 }
 
 func (*suite) TestSetCACert(c *gc.C) {

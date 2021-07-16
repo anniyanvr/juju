@@ -53,6 +53,7 @@ const (
 	GUISettingsC      = guisettingsC
 	GlobalSettingsC   = globalSettingsC
 	SettingsC         = settingsC
+	UnitsC            = unitsC
 )
 
 var (
@@ -78,6 +79,10 @@ type (
 	StorageBackend         = storageBackend
 	DeviceBackend          = deviceBackend
 	ControllerNodeInstance = controllerNode
+)
+
+var (
+	IsDying = isDying
 )
 
 func NewStateSettingsForCollection(backend modelBackend, collection string) *StateSettings {
@@ -186,6 +191,21 @@ func AddTestingCharmForSeries(c *gc.C, st *State, series, name string) *Charm {
 	// Existing logic!
 	// Get charm from `quantal` dir or `kubernetes`.
 	return addCharm(c, st, series, getCharmRepo(series).CharmDir(name))
+}
+
+func AddTestingCharmhubCharmForSeries(c *gc.C, st *State, series, name string) *Charm {
+	ch := getCharmRepo(series).CharmDir(name)
+	ident := fmt.Sprintf("amd64/%s/%s-%d", series, name, ch.Revision())
+	curl := charm.MustParseURL("ch:" + ident)
+	info := CharmInfo{
+		Charm:       ch,
+		ID:          curl,
+		StoragePath: "dummy-path",
+		SHA256:      ident + "-sha256",
+	}
+	sch, err := st.AddCharm(info)
+	c.Assert(err, jc.ErrorIsNil)
+	return sch
 }
 
 func AddTestingCharmMultiSeries(c *gc.C, st *State, name string) *Charm {
@@ -389,10 +409,6 @@ func WatcherMakeIdFilter(st *State, marker string, receivers ...ActionReceiver) 
 	return makeIdFilter(st, marker, receivers...)
 }
 
-func NewActionStatusWatcher(st *State, receivers []ActionReceiver, statuses ...ActionStatus) StringsWatcher {
-	return newActionStatusWatcher(st, receivers, statuses...)
-}
-
 func GetAllUpgradeInfos(st *State) ([]*UpgradeInfo, error) {
 	upgradeInfos, closer := st.db().GetCollection(upgradeInfoC)
 	defer closer()
@@ -556,6 +572,7 @@ func MakeLogDoc(
 	location string,
 	level loggo.Level,
 	msg string,
+	labels []string,
 ) *logDoc {
 	return &logDoc{
 		Id:       bson.NewObjectId(),
@@ -566,6 +583,7 @@ func MakeLogDoc(
 		Location: location,
 		Level:    int(level),
 		Message:  msg,
+		Labels:   labels,
 	}
 }
 

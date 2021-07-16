@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,7 +23,9 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/juju/juju/agent"
 	agenttools "github.com/juju/juju/agent/tools"
@@ -32,6 +33,7 @@ import (
 	k8s "github.com/juju/juju/caas/kubernetes"
 	"github.com/juju/juju/caas/kubernetes/provider/constants"
 	k8sproxy "github.com/juju/juju/caas/kubernetes/provider/proxy"
+	"github.com/juju/juju/caas/kubernetes/provider/resources"
 	k8sutils "github.com/juju/juju/caas/kubernetes/provider/utils"
 	providerutils "github.com/juju/juju/caas/kubernetes/provider/utils"
 	"github.com/juju/juju/cloud"
@@ -41,6 +43,7 @@ import (
 	"github.com/juju/juju/core/watcher"
 	"github.com/juju/juju/environs"
 	"github.com/juju/juju/environs/bootstrap"
+	environsbootstrap "github.com/juju/juju/environs/bootstrap"
 	"github.com/juju/juju/mongo"
 )
 
@@ -152,22 +155,61 @@ type controllerStacker interface {
 	Deploy() error
 }
 
-func controllerCorelation(broker *kubernetesClient) (string, error) {
-	// ensure controller specific annotations.
-	controllerUUIDKey := k8sutils.AnnotationControllerIsControllerKey(false)
-	_ = broker.addAnnotations(controllerUUIDKey, "true")
+// findControllerNamespace is used for finding a controller's namespace based on
+// its model name and controller uuid. This function really shouldn't exist
+// and should be removed in 3.0. We have it here as we are still trying to use
+// Kubernetes annotations as database selectors in some parts of Juju.
+func findControllerNamespace(
+	client kubernetes.Interface,
+	controllerUUID string,
+) (*core.Namespace, error) {
+	// First we are going to start off by listing namespaces that are not using
+	// legacy labels as that is the direction we are moving towards and hence
+	// should be the quickest operation
+	namespaces, err := client.CoreV1().Namespaces().List(
+		context.TODO(),
+		v1.ListOptions{
+			LabelSelector: labels.Set{
+				constants.LabelJujuModelName: environsbootstrap.ControllerModelName,
+			}.String(),
+		},
+	)
 
-	ns, err := broker.listNamespacesByAnnotations(broker.GetAnnotations())
-	if errors.IsNotFound(err) || ns == nil {
-		// No existing controller found on the cluster.
-		// A controller must be bootstrapping now.
-		// It will reply on setControllerNamespace in controller stack to set namespace name.
-		return "", errors.NewNotFound(err, "controller")
-	}
 	if err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Annotate(err, "finding controller namespace with non legacy labels")
 	}
-	return ns[0].GetName(), nil
+
+	for _, ns := range namespaces.Items {
+		if ns.Annotations[k8sutils.AnnotationControllerUUIDKey(false)] == controllerUUID {
+			return &ns, nil
+		}
+	}
+
+	// We didn't find anything using new labels so lets try the old ones.
+	namespaces, err = client.CoreV1().Namespaces().List(
+		context.TODO(),
+		v1.ListOptions{
+			LabelSelector: labels.Set{
+				constants.LegacyLabelModelName: environsbootstrap.ControllerModelName,
+			}.String(),
+		},
+	)
+
+	if err != nil {
+		return nil, errors.Annotate(err, "finding controller namespace with legacy labels")
+	}
+
+	for _, ns := range namespaces.Items {
+		if ns.Annotations[k8sutils.AnnotationControllerUUIDKey(true)] == controllerUUID {
+			return &ns, nil
+		}
+	}
+
+	return nil, errors.NotFoundf(
+		"controller namespace not found for model %q and controller uuid %q",
+		environsbootstrap.ControllerModelName,
+		controllerUUID,
+	)
 }
 
 // DecideControllerNamespace decides the namespace name to use for a new controller.
@@ -264,6 +306,13 @@ func getBootstrapResourceName(stackName string, name string) string {
 
 func (c *controllerStack) getResourceName(name string) string {
 	return getBootstrapResourceName(c.stackName, name)
+}
+
+func (c *controllerStack) pathJoin(elem ...string) string {
+	// Setting series for bootstrapping to kubernetes is currently not supported.
+	// We always use forward-slash because Linux is the only OS we support now.
+	pathSeparator := "/"
+	return strings.Join(elem, pathSeparator)
 }
 
 func (c *controllerStack) getControllerSecret() (secret *core.Secret, err error) {
@@ -411,7 +460,20 @@ func (c *controllerStack) Deploy() (err error) {
 	}
 
 	// create service account for local cluster/provider connections.
-	if err = c.ensureControllerServiceAccount(); err != nil {
+	_, saCleanUps, err := ensureControllerServiceAccount(
+		c.ctx.Context(),
+		c.broker.client(),
+		c.broker.GetCurrentNamespace(),
+		c.stackLabels,
+		c.stackAnnotations,
+	)
+	c.addCleanUp(func() {
+		logger.Debugf("delete controller service accounts")
+		for _, v := range saCleanUps {
+			v()
+		}
+	})
+	if err != nil {
 		return errors.Annotate(err, "creating service account for controller")
 	}
 	if isDone() {
@@ -679,37 +741,39 @@ func (c *controllerStack) ensureControllerConfigmapAgentConf() error {
 	return errors.Trace(err)
 }
 
-func (c *controllerStack) ensureControllerServiceAccount() error {
-	sa := &core.ServiceAccount{
+// ensureControllerServiceAccount is responsible for making sure the in cluster
+// service account for the controller exists and is upto date. Returns the name
+// of the service account create, cleanup functions and any errors.
+func ensureControllerServiceAccount(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+	labels map[string]string,
+	annotations map[string]string,
+) (string, []func(), error) {
+	sa := resources.NewServiceAccount("controller", namespace, &core.ServiceAccount{
 		ObjectMeta: v1.ObjectMeta{
-			Name:      "controller",
-			Namespace: c.broker.GetCurrentNamespace(),
 			Labels: providerutils.LabelsMerge(
-				c.stackLabels,
+				labels,
 				providerutils.LabelsJujuModelOperatorDisableWebhook,
 			),
-			Annotations: c.stackAnnotations,
+			Annotations: annotations,
 		},
 		AutomountServiceAccountToken: boolPtr(true),
-	}
-
-	logger.Debugf("ensuring controller service account: \n%+v", sa)
-	_, cleanUps, err := c.broker.ensureServiceAccount(sa)
-	c.addCleanUp(func() {
-		logger.Debugf("deleting %q service account", sa.Name)
-		for _, v := range cleanUps {
-			v()
-		}
 	})
+
+	cleanUps, err := sa.Ensure(context.TODO(), client)
 	if err != nil {
-		return errors.Trace(err)
+		return sa.Name, cleanUps, errors.Trace(err)
 	}
 
-	crb := &rbacv1.ClusterRoleBinding{
+	// name cluster role binding after the controller namespace.
+	clusterRoleBindingName := namespace
+	crb := resources.NewClusterRoleBinding(clusterRoleBindingName, &rbacv1.ClusterRoleBinding{
 		ObjectMeta: v1.ObjectMeta{
-			Name:        c.broker.GetCurrentNamespace(), // name cluster role binding after the controller namespace.
+			Name:        clusterRoleBindingName,
 			Labels:      providerutils.LabelsForModel("controller", false),
-			Annotations: c.stackAnnotations,
+			Annotations: annotations,
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
@@ -719,18 +783,13 @@ func (c *controllerStack) ensureControllerServiceAccount() error {
 		Subjects: []rbacv1.Subject{{
 			Kind:      "ServiceAccount",
 			Name:      "controller",
-			Namespace: c.broker.GetCurrentNamespace(),
+			Namespace: namespace,
 		}},
-	}
-
-	_, crbCleanUps, err := c.broker.ensureClusterRoleBinding(crb)
-	c.addCleanUp(func() {
-		logger.Debugf("deleting %q cluster role binding", crb.Name)
-		for _, v := range crbCleanUps {
-			v()
-		}
 	})
-	return errors.Trace(err)
+
+	crbCleanUps, err := crb.Ensure(ctx, client)
+	cleanUps = append(cleanUps, crbCleanUps...)
+	return sa.Name, cleanUps, errors.Trace(err)
 }
 
 func (c *controllerStack) createControllerStatefulset() error {
@@ -1045,7 +1104,7 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 	if c.pcfg.Controller.Config.MongoMemoryProfile() == string(mongo.MemoryProfileLow) {
 		wiredTigerCacheSize = mongo.LowCacheSize
 	}
-	generateContainerSpecs := func(jujudCmd string) []core.Container {
+	generateContainerSpecs := func(jujudCmd string) ([]core.Container, error) {
 		var containerSpec []core.Container
 		// add container mongoDB.
 		// TODO(bootstrap): refactor mongo package to make it usable for IAAS and CAAS,
@@ -1057,14 +1116,14 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 				"--tls",
 				"--tlsAllowInvalidHostnames",
 				"--tlsAllowInvalidCertificates",
-				fmt.Sprintf("--tlsCertificateKeyFile=%s/%s", c.pcfg.DataDir, c.fileNameSSLKey),
+				fmt.Sprintf("--tlsCertificateKeyFile=%s", c.pathJoin(c.pcfg.DataDir, c.fileNameSSLKey)),
 				"--eval",
 				"db.adminCommand('ping')",
 			},
 		}
 		args := []string{
-			fmt.Sprintf("--dbpath=%s/db", c.pcfg.DataDir),
-			fmt.Sprintf("--tlsCertificateKeyFile=%s/%s", c.pcfg.DataDir, c.fileNameSSLKey),
+			fmt.Sprintf("--dbpath=%s", c.pathJoin(c.pcfg.DataDir, "db")),
+			fmt.Sprintf("--tlsCertificateKeyFile=%s", c.pathJoin(c.pcfg.DataDir, c.fileNameSSLKey)),
 			"--tlsCertificateKeyFilePassword=ignored",
 			"--tlsMode=requireTLS",
 			fmt.Sprintf("--port=%d", c.portMongoDB),
@@ -1072,23 +1131,34 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 			fmt.Sprintf("--replSet=%s", mongo.ReplicaSetName),
 			"--quiet",
 			"--oplogSize=1024",
-			"--ipv6",
 			"--auth",
-			fmt.Sprintf("--keyFile=%s/%s", c.pcfg.DataDir, c.fileNameSharedSecret),
+			fmt.Sprintf("--keyFile=%s", c.pathJoin(c.pcfg.DataDir, c.fileNameSharedSecret)),
 			"--storageEngine=wiredTiger",
 			"--bind_ip_all",
 		}
 		if wiredTigerCacheSize > 0 {
 			args = append(args, fmt.Sprintf("--wiredTigerCacheSizeGB=%v", wiredTigerCacheSize))
 		}
+		// Create the script used to start mongo.
+		const mongoSh = "/root/mongo.sh"
+		mongoStartup := fmt.Sprintf(caas.MongoStartupShTemplate, strings.Join(args, " "))
+		// Write it to a file so it can be executed.
+		mongoStartup = strings.ReplaceAll(mongoStartup, "\n", "\\n")
+		makeMongoCmd := fmt.Sprintf("printf '%s'>%s", mongoStartup, mongoSh)
+		mongoArgs := fmt.Sprintf("%[1]s && chmod a+x %[2]s && %[2]s", makeMongoCmd, mongoSh)
+		logger.Debugf("mongodb container args:\n%s", mongoArgs)
+
 		containerSpec = append(containerSpec, core.Container{
 			Name:            mongoDBContainerName,
 			ImagePullPolicy: core.PullIfNotPresent,
 			Image:           c.pcfg.GetJujuDbOCIImagePath(),
 			Command: []string{
-				"mongod",
+				"/bin/sh",
 			},
-			Args: args,
+			Args: []string{
+				"-c",
+				mongoArgs,
+			},
 			Ports: []core.ContainerPort{
 				{
 					Name:          "mongodb",
@@ -1123,18 +1193,18 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 				},
 				{
 					Name:      c.pvcNameControllerPodStorage,
-					MountPath: filepath.Join(c.pcfg.DataDir, "db"),
+					MountPath: c.pathJoin(c.pcfg.DataDir, "db"),
 					SubPath:   "db",
 				},
 				{
 					Name:      c.resourceNameVolSSLKey,
-					MountPath: filepath.Join(c.pcfg.DataDir, c.fileNameSSLKeyMount),
+					MountPath: c.pathJoin(c.pcfg.DataDir, c.fileNameSSLKeyMount),
 					SubPath:   c.fileNameSSLKeyMount,
 					ReadOnly:  true,
 				},
 				{
 					Name:      c.resourceNameVolSharedSecret,
-					MountPath: filepath.Join(c.pcfg.DataDir, c.fileNameSharedSecret),
+					MountPath: c.pathJoin(c.pcfg.DataDir, c.fileNameSharedSecret),
 					SubPath:   c.fileNameSharedSecret,
 					ReadOnly:  true,
 				},
@@ -1142,10 +1212,14 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 		})
 
 		// add container API server.
+		controllerImage, err := c.pcfg.GetControllerImagePath()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		containerSpec = append(containerSpec, core.Container{
 			Name:            apiServerContainerName,
 			ImagePullPolicy: core.PullIfNotPresent,
-			Image:           c.pcfg.GetControllerImagePath(),
+			Image:           controllerImage,
 			Command: []string{
 				"/bin/sh",
 			},
@@ -1166,7 +1240,7 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 				},
 				{
 					Name: c.resourceNameVolAgentConf,
-					MountPath: filepath.Join(
+					MountPath: c.pathJoin(
 						c.pcfg.DataDir,
 						"agents",
 						"controller-"+c.pcfg.ControllerId,
@@ -1176,26 +1250,26 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 				},
 				{
 					Name:      c.resourceNameVolSSLKey,
-					MountPath: filepath.Join(c.pcfg.DataDir, c.fileNameSSLKeyMount),
+					MountPath: c.pathJoin(c.pcfg.DataDir, c.fileNameSSLKeyMount),
 					SubPath:   c.fileNameSSLKeyMount,
 					ReadOnly:  true,
 				},
 				{
 					Name:      c.resourceNameVolSharedSecret,
-					MountPath: filepath.Join(c.pcfg.DataDir, c.fileNameSharedSecret),
+					MountPath: c.pathJoin(c.pcfg.DataDir, c.fileNameSharedSecret),
 					SubPath:   c.fileNameSharedSecret,
 					ReadOnly:  true,
 				},
 				{
 					Name:      c.resourceNameVolBootstrapParams,
-					MountPath: filepath.Join(c.pcfg.DataDir, c.fileNameBootstrapParams),
+					MountPath: c.pathJoin(c.pcfg.DataDir, c.fileNameBootstrapParams),
 					SubPath:   c.fileNameBootstrapParams,
 					ReadOnly:  true,
 				},
 			},
 		})
 		c.containerCount = len(containerSpec)
-		return containerSpec
+		return containerSpec, nil
 	}
 
 	loggingOption := "--show-log"
@@ -1205,7 +1279,7 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 		loggingOption = "--debug"
 	}
 
-	agentConfigRelativePath := filepath.Join(
+	agentConfigRelativePath := c.pathJoin(
 		"agents",
 		fmt.Sprintf("controller-%s", c.pcfg.ControllerId),
 		c.fileNameAgentConf,
@@ -1221,19 +1295,25 @@ func (c *controllerStack) buildContainerSpecForController(statefulset *apps.Stat
 		}
 		// only do bootstrap-state on the bootstrap controller - controller-0.
 		jujudCmd += "\n" + fmt.Sprintf(
-			"test -e $JUJU_DATA_DIR/%s || $JUJU_TOOLS_DIR/jujud bootstrap-state $JUJU_DATA_DIR/%s --data-dir $JUJU_DATA_DIR %s --timeout %s",
-			agentConfigRelativePath,
-			c.fileNameBootstrapParams,
+			"test -e %s || %s bootstrap-state %s --data-dir $JUJU_DATA_DIR %s --timeout %s",
+			c.pathJoin("$JUJU_DATA_DIR", agentConfigRelativePath),
+			c.pathJoin("$JUJU_TOOLS_DIR", "jujud"),
+			c.pathJoin("$JUJU_DATA_DIR", c.fileNameBootstrapParams),
 			loggingOption,
 			c.timeout.String(),
 		)
 	}
 	jujudCmd += "\n" + fmt.Sprintf(
-		"$JUJU_TOOLS_DIR/jujud machine --data-dir $JUJU_DATA_DIR --controller-id %s --log-to-stderr %s",
+		"%s machine --data-dir $JUJU_DATA_DIR --controller-id %s --log-to-stderr %s",
+		c.pathJoin("$JUJU_TOOLS_DIR", "jujud"),
 		c.pcfg.ControllerId,
 		loggingOption,
 	)
-	statefulset.Spec.Template.Spec.Containers = generateContainerSpecs(jujudCmd)
+	containers, err := generateContainerSpecs(jujudCmd)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	statefulset.Spec.Template.Spec.Containers = containers
 	return nil
 }
 

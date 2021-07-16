@@ -30,6 +30,9 @@ var actionLogger = loggo.GetLogger("juju.state.action")
 type ActionStatus string
 
 const (
+	// ActionError signifies that the action did get run due to an error.
+	ActionError ActionStatus = "error"
+
 	// ActionFailed signifies that the action did not complete successfully.
 	ActionFailed ActionStatus = "failed"
 
@@ -289,7 +292,11 @@ func (a *action) Begin() (Action, error) {
 					return nil, errors.Trace(err)
 				}
 			}
-			if err == nil && parentOperation.(*operation).doc.Status == ActionPending {
+			parentOpDetails, ok := parentOperation.(*operation)
+			if !ok {
+				return nil, errors.Errorf("parentOperation must be of type operation")
+			}
+			if err == nil && parentOpDetails.doc.Status == ActionPending {
 				updateOperationOp = &txn.Op{
 					C:      operationsC,
 					Id:     a.st.docID(parentOperation.Id()),
@@ -425,6 +432,7 @@ func (a *action) removeAndLogBuildTxn(finalStatus ActionStatus, results map[stri
 				ActionCancelled,
 				ActionFailed,
 				ActionAborted,
+				ActionError,
 			}}}}}
 		// If this is the last action to be marked as completed
 		// for the parent operation, the operation itself is also
@@ -432,13 +440,17 @@ func (a *action) removeAndLogBuildTxn(finalStatus ActionStatus, results map[stri
 		var updateOperationOp *txn.Op
 		var err error
 		if parentOperation != nil {
+			parentOpDetails, ok := parentOperation.(*operation)
+			if !ok {
+				return nil, errors.Errorf("parentOperation must be of type operation")
+			}
 			if attempt > 0 {
 				err = parentOperation.Refresh()
 				if err != nil && !errors.IsNotFound(err) {
 					return nil, errors.Trace(err)
 				}
 			}
-			tasks := parentOperation.(*operation).taskStatus
+			tasks := parentOpDetails.taskStatus
 			statusStats := set.NewStrings(string(finalStatus))
 			var numComplete int
 			for _, status := range tasks {
@@ -447,7 +459,8 @@ func (a *action) removeAndLogBuildTxn(finalStatus ActionStatus, results map[stri
 					numComplete++
 				}
 			}
-			if numComplete == len(tasks)-1 {
+			spawnedTaskCount := parentOpDetails.doc.SpawnedTaskCount
+			if numComplete == spawnedTaskCount-1 {
 				// Set the operation status based on the individual
 				// task status values. eg if any task is failed,
 				// the entire operation is considered failed.
@@ -459,20 +472,23 @@ func (a *action) removeAndLogBuildTxn(finalStatus ActionStatus, results map[stri
 					}
 				}
 				updateOperationOp = &txn.Op{
-					C:      operationsC,
-					Id:     a.st.docID(parentOperation.Id()),
-					Assert: assertNotComplete,
+					C:  operationsC,
+					Id: a.st.docID(parentOperation.Id()),
+					Assert: append(assertNotComplete,
+						bson.DocElem{"complete-task-count", bson.D{{"$eq", spawnedTaskCount - 1}}}),
 					Update: bson.D{{"$set", bson.D{
 						{"status", finalOperationStatus},
 						{"completed", completedTime},
-						{"complete-task-count", numComplete + 1},
+						{"complete-task-count", spawnedTaskCount},
 					}}},
 				}
 			} else {
 				updateOperationOp = &txn.Op{
-					C:      operationsC,
-					Id:     a.st.docID(parentOperation.Id()),
-					Assert: bson.D{{"complete-task-count", bson.D{{"$lt", len(tasks) - 1}}}},
+					C:  operationsC,
+					Id: a.st.docID(parentOperation.Id()),
+					Assert: append(assertNotComplete,
+						bson.DocElem{"complete-task-count",
+							bson.D{{"$lt", spawnedTaskCount - 1}}}),
 					Update: bson.D{{"$inc", bson.D{
 						{"complete-task-count", 1},
 					}}},
@@ -655,7 +671,7 @@ func (m *Model) FindActionsByName(name string) ([]Action, error) {
 
 // EnqueueAction caches the action doc to the database.
 func (m *Model) EnqueueAction(operationID string, receiver names.Tag,
-	actionName string, payload map[string]interface{}, parallel bool, executionGroup string) (Action, error) {
+	actionName string, payload map[string]interface{}, parallel bool, executionGroup string, actionError error) (Action, error) {
 	if len(actionName) == 0 {
 		return nil, errors.New("action name required")
 	}
@@ -669,6 +685,10 @@ func (m *Model) EnqueueAction(operationID string, receiver names.Tag,
 		return nil, errors.Trace(err)
 	}
 
+	if actionError != nil {
+		doc.Status = ActionError
+		doc.Message = actionError.Error()
+	}
 	ops := []txn.Op{{
 		C:      receiverCollectionName,
 		Id:     receiverId,
@@ -682,12 +702,15 @@ func (m *Model) EnqueueAction(operationID string, receiver names.Tag,
 		Id:     doc.DocId,
 		Assert: txn.DocMissing,
 		Insert: doc,
-	}, {
-		C:      actionNotificationsC,
-		Id:     ndoc.DocId,
-		Assert: txn.DocMissing,
-		Insert: ndoc,
 	}}
+	if actionError == nil {
+		ops = append(ops, txn.Op{
+			C:      actionNotificationsC,
+			Id:     ndoc.DocId,
+			Assert: txn.DocMissing,
+			Insert: ndoc,
+		})
+	}
 
 	buildTxn := func(attempt int) ([]txn.Op, error) {
 		if notDead, err := isNotDead(m.st, receiverCollectionName, receiverId); err != nil {
@@ -707,6 +730,20 @@ func (m *Model) EnqueueAction(operationID string, receiver names.Tag,
 		return newAction(m.st, doc), nil
 	}
 	return nil, err
+}
+
+// AddAction adds a new Action of type name and using arguments payload to
+// the receiver, and returns its ID.
+func (m *Model) AddAction(receiver ActionReceiver, operationID, name string, payload map[string]interface{}, parallel *bool, executionGroup *string) (Action, error) {
+	payload, runParallel, runExecutionGroup, err := receiver.PrepareActionPayload(name, payload, parallel, executionGroup)
+	if err != nil {
+		_, err2 := m.EnqueueAction(operationID, receiver.Tag(), name, payload, runParallel, runExecutionGroup, err)
+		if err2 != nil {
+			err = err2
+		}
+		return nil, errors.Trace(err)
+	}
+	return m.EnqueueAction(operationID, receiver.Tag(), name, payload, runParallel, runExecutionGroup, nil)
 }
 
 // matchingActions finds actions that match ActionReceiver.

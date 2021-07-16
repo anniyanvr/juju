@@ -128,7 +128,8 @@ func (c *listOperationsCommand) Init(args []string) error {
 			params.ActionFailed,
 			params.ActionCancelled,
 			params.ActionAborting,
-			params.ActionAborted:
+			params.ActionAborted,
+			params.ActionError:
 		default:
 			nameErrors = append(nameErrors,
 				fmt.Sprintf("%q is not a valid task status, want one of %v",
@@ -139,7 +140,8 @@ func (c *listOperationsCommand) Init(args []string) error {
 						params.ActionFailed,
 						params.ActionCancelled,
 						params.ActionAborting,
-						params.ActionAborted}))
+						params.ActionAborted,
+						params.ActionError}))
 		}
 	}
 	if len(nameErrors) > 0 {
@@ -188,13 +190,13 @@ func (c *listOperationsCommand) Run(ctx *cmd.Context) error {
 	sort.Sort(operationResults)
 	if c.out.Name() == "plain" {
 		if c.offset > 0 || results.Truncated {
-			fmt.Fprintln(ctx.Stdout, fmt.Sprintf("Displaying operation results %d to %d.", c.offset+1, int(c.offset)+len(operationResults)))
+			fmt.Fprintf(ctx.Stdout, "Displaying operation results %d to %d.\n", c.offset+1, int(c.offset)+len(operationResults))
 			if results.Truncated {
 				limit := c.limit
 				if limit == 0 {
 					limit = defaultMaxOperationsLimit
 				}
-				fmt.Fprintln(ctx.Stdout, fmt.Sprintf("Run the command again with --offset=%d --limit=%d to see the next batch.\n", c.offset+limit, limit))
+				fmt.Fprintf(ctx.Stdout, "Run the command again with --offset=%d --limit=%d to see the next batch.\n\n", c.offset+limit, limit)
 			}
 		}
 		return c.out.Write(ctx, operationResults)
@@ -222,7 +224,7 @@ func (c *listOperationsCommand) formatTabular(writer io.Writer, value interface{
 		return errors.Errorf("expected value of type %T, got %T", results, value)
 	}
 	tw := output.TabWriter(writer)
-	w := output.Wrapper{tw}
+	w := output.Wrapper{TabWriter: tw}
 	w.SetColumnAlignRight(0)
 
 	printOperations := func(operations []operationLine, utc bool) {
@@ -297,6 +299,7 @@ func (s byId) Less(i, j int) bool {
 type operationInfo struct {
 	Summary string              `yaml:"summary" json:"summary"`
 	Status  string              `yaml:"status" json:"status"`
+	Fail    string              `yaml:"fail,omitempty" json:"fail,omitempty"`
 	Error   string              `yaml:"error,omitempty" json:"error,omitempty"`
 	Action  *actionSummary      `yaml:"action,omitempty" json:"action,omitempty"`
 	Timing  timingInfo          `yaml:"timing,omitempty" json:"timing,omitempty"`
@@ -329,6 +332,7 @@ type taskInfo struct {
 func formatOperationResult(operation actionapi.Operation, utc bool) operationInfo {
 	result := operationInfo{
 		Summary: operation.Summary,
+		Fail:    operation.Fail,
 		Status:  operation.Status,
 		Timing: timingInfo{
 			Enqueued:  formatTimestamp(operation.Enqueued, false, utc, false),

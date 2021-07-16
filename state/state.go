@@ -31,13 +31,11 @@ import (
 	"github.com/juju/version/v2"
 
 	"github.com/juju/juju/core/application"
-	"github.com/juju/juju/core/arch"
 	corecharm "github.com/juju/juju/core/charm"
 	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/core/instance"
 	"github.com/juju/juju/core/lease"
 	coremodel "github.com/juju/juju/core/model"
-	"github.com/juju/juju/core/network"
 	corenetwork "github.com/juju/juju/core/network"
 	"github.com/juju/juju/core/os"
 	"github.com/juju/juju/core/permission"
@@ -879,9 +877,75 @@ func (st *State) tagToCollectionAndId(tag names.Tag) (string, interface{}, error
 	return coll, id, nil
 }
 
+// removeStalePeerRelationsOps returns the operations necessary to remove any
+// stale peer relation docs that may have been left behind after switching to
+// a different charm.
+func (st *State) removeStalePeerRelationsOps(applicationName string, relations []*Relation, newCharmMeta *charm.Meta) ([]txn.Op, error) {
+	if len(relations) == 0 {
+		return nil, nil // nothing to do
+	}
+
+	// Construct set of keys for existing peer relations.
+	oldPeerRelKeySet := set.NewStrings()
+nextRel:
+	for _, rel := range relations {
+		for _, ep := range rel.Endpoints() {
+			if ep.Role == charm.RolePeer {
+				oldPeerRelKeySet.Add(ep.String())
+				continue nextRel
+			}
+		}
+	}
+
+	// Construct set of keys for any peer relations defined by the new charm.
+	newPeerRelKeySet := set.NewStrings()
+	for _, rel := range newCharmMeta.Peers {
+		newPeerRelKeySet.Add(
+			relationKey(
+				[]Endpoint{{
+					ApplicationName: applicationName,
+					Relation:        rel,
+				}},
+			),
+		)
+	}
+
+	// Remove any stale peer relation docs
+	var ops []txn.Op
+	for peerRelKey := range oldPeerRelKeySet.Difference(newPeerRelKeySet) {
+		ops = append(ops,
+			txn.Op{
+				C:      relationsC,
+				Id:     st.docID(peerRelKey),
+				Assert: txn.DocExists,
+				Remove: true,
+			},
+		)
+	}
+
+	// If any peer relation docs are to be removed, we need to adjust the
+	// relationcount field for the application document accordingly.
+	if removals := len(ops); removals > 0 {
+		ops = append(ops,
+			txn.Op{
+				C:      applicationsC,
+				Id:     st.docID(applicationName),
+				Assert: txn.DocExists,
+				Update: bson.M{
+					"$inc": bson.M{
+						"relationcount": -removals,
+					},
+				},
+			},
+		)
+	}
+
+	return ops, nil
+}
+
 // addPeerRelationsOps returns the operations necessary to add the
 // specified application peer relations to the state.
-func (st *State) addPeerRelationsOps(applicationname string, peers map[string]charm.Relation) ([]txn.Op, error) {
+func (st *State) addPeerRelationsOps(applicationName string, peers map[string]charm.Relation) ([]txn.Op, error) {
 	now := st.clock().Now()
 	var ops []txn.Op
 	for _, rel := range peers {
@@ -890,7 +954,7 @@ func (st *State) addPeerRelationsOps(applicationname string, peers map[string]ch
 			return nil, errors.Trace(err)
 		}
 		eps := []Endpoint{{
-			ApplicationName: applicationname,
+			ApplicationName: applicationName,
 			Relation:        rel,
 		}}
 		relKey := relationKey(eps)
@@ -937,7 +1001,7 @@ type SaveCloudServiceArgs struct {
 	// then is wrapped with applicationGlobalKey.
 	Id         string
 	ProviderId string
-	Addresses  network.SpaceAddresses
+	Addresses  corenetwork.SpaceAddresses
 
 	Generation            int64
 	DesiredScaleProtected bool
@@ -1011,16 +1075,8 @@ func (st *State) AddApplication(args AddApplicationArgs) (_ *Application, err er
 		return nil, errors.Trace(err)
 	}
 
-	switch model.Type() {
-	case ModelTypeIAAS:
-		// CAAS doesn't support architecture in every scenario.
-		args.Constraints, err = st.deriveApplicationConstraints(args.Constraints, args.Charm.Meta().Subordinate)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-	case ModelTypeCAAS:
-		// CAAS charms don't support volume/block storage yet.
+	// CAAS charms don't support volume/block storage yet.
+	if model.Type() == ModelTypeCAAS {
 		for name, charmStorage := range args.Charm.Meta().Storage {
 			if storageKind(charmStorage.Type) != storage.StorageKindBlock {
 				continue
@@ -1216,11 +1272,11 @@ func (st *State) AddApplication(args AddApplicationArgs) (_ *Application, err er
 		//
 		// TODO(dimitern): Ensure each st.Endpoint has a space name associated in a
 		// follow-up.
-		peerOps, err := st.addPeerRelationsOps(args.Name, peers)
+		addPeerOps, err := st.addPeerRelationsOps(args.Name, peers)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ops = append(ops, peerOps...)
+		ops = append(ops, addPeerOps...)
 
 		if len(args.Resources) > 0 {
 			// Collect pending resource resolution operations.
@@ -1267,28 +1323,6 @@ func (st *State) AddApplication(args AddApplicationArgs) (_ *Application, err er
 	return nil, errors.Trace(err)
 }
 
-func (st *State) deriveApplicationConstraints(cons constraints.Value, subordinate bool) (constraints.Value, error) {
-	if subordinate {
-		return cons, nil
-	}
-
-	result := cons
-	if !cons.HasArch() {
-		modelConstraints, err := st.ModelConstraints()
-		if err != nil {
-			return constraints.Value{}, errors.Trace(err)
-		}
-
-		if modelConstraints.HasArch() {
-			result.Arch = modelConstraints.Arch
-		} else {
-			a := arch.DefaultArchitecture
-			result.Arch = &a
-		}
-	}
-	return result, nil
-}
-
 func (st *State) processCommonModelApplicationArgs(args *AddApplicationArgs) error {
 	if args.Series == "" {
 		// args.Release is not set, so use the series in the URL.
@@ -1323,7 +1357,7 @@ func (st *State) processCommonModelApplicationArgs(args *AddApplicationArgs) err
 			}
 		}
 		if len(supportedSeries) > 0 {
-			// TODO(embedded): handle computed series
+			// TODO(sidecar): handle computed series
 			seriesOS, err := series.GetOSFromSeries(args.Series)
 			if err != nil {
 				return errors.Trace(err)
@@ -1672,7 +1706,7 @@ func (st *State) addMachineWithPlacement(unit *Unit, data *placementData) (*Mach
 		// a constraint.  This also preserves behavior from when the
 		// AlphaSpaceName was "". This condition will be removed with
 		// the institution of universal mutable spaces.
-		if name != network.AlphaSpaceName {
+		if name != corenetwork.AlphaSpaceName {
 			spaces.Add(name)
 		}
 	}
@@ -1941,6 +1975,7 @@ func (st *State) endpoints(name string, filter func(ep Endpoint) bool) ([]Endpoi
 func (st *State) AddRelation(eps ...Endpoint) (r *Relation, err error) {
 	key := relationKey(eps)
 	defer errors.DeferredAnnotatef(&err, "cannot add relation %q", key)
+
 	// Enforce basic endpoint sanity. The epCount restrictions may be relaxed
 	// in the future; if so, this method is likely to need significant rework.
 	if len(eps) != 2 {
@@ -1980,10 +2015,12 @@ func (st *State) AddRelation(eps ...Endpoint) (r *Relation, err error) {
 	} else {
 		compatibleSeries = false
 	}
+
 	// We only get a unique relation id once, to save on roundtrips. If it's
 	// -1, we haven't got it yet (we don't get it at this stage, because we
 	// still don't know whether it's sane to even attempt creation).
 	id := -1
+
 	// If a application's charm is upgraded while we're trying to add a relation,
 	// we'll need to re-validate application sanity.
 	var doc *relationDoc
@@ -1993,8 +2030,14 @@ func (st *State) AddRelation(eps ...Endpoint) (r *Relation, err error) {
 		if exists, err := isNotDead(st, relationsC, key); err != nil {
 			return nil, errors.Trace(err)
 		} else if exists {
-			return nil, errors.AlreadyExistsf("relation %v", key)
+			// Ignore the error here, if there is an error, we know that dying
+			// will be false and can fall through to error message below.
+			if dying, _ := isDying(st, relationsC, key); dying {
+				return nil, errors.NewAlreadyExists(nil, fmt.Sprintf("relation %v is dying, but not yet removed", key))
+			}
+			return nil, errors.NewAlreadyExists(nil, fmt.Sprintf("relation %v", key))
 		}
+
 		// Collect per-application operations, checking sanity as we go.
 		var ops []txn.Op
 		var subordinateCount int
@@ -2347,7 +2390,7 @@ func (st *State) SetAdminMongoPassword(password string) error {
 	return errors.Trace(err)
 }
 
-func (st *State) networkEntityGlobalKeyOp(globalKey string, providerId network.Id) txn.Op {
+func (st *State) networkEntityGlobalKeyOp(globalKey string, providerId corenetwork.Id) txn.Op {
 	key := st.networkEntityGlobalKey(globalKey, providerId)
 	return txn.Op{
 		C:      providerIDsC,
@@ -2357,7 +2400,7 @@ func (st *State) networkEntityGlobalKeyOp(globalKey string, providerId network.I
 	}
 }
 
-func (st *State) networkEntityGlobalKeyRemoveOp(globalKey string, providerId network.Id) txn.Op {
+func (st *State) networkEntityGlobalKeyRemoveOp(globalKey string, providerId corenetwork.Id) txn.Op {
 	key := st.networkEntityGlobalKey(globalKey, providerId)
 	return txn.Op{
 		C:      providerIDsC,
@@ -2366,7 +2409,7 @@ func (st *State) networkEntityGlobalKeyRemoveOp(globalKey string, providerId net
 	}
 }
 
-func (st *State) networkEntityGlobalKeyExists(globalKey string, providerId network.Id) (bool, error) {
+func (st *State) networkEntityGlobalKeyExists(globalKey string, providerId corenetwork.Id) (bool, error) {
 	col, closer := st.db().GetCollection(providerIDsC)
 	defer closer()
 
@@ -2384,7 +2427,7 @@ func (st *State) networkEntityGlobalKeyExists(globalKey string, providerId netwo
 	}
 }
 
-func (st *State) networkEntityGlobalKey(globalKey string, providerId network.Id) string {
+func (st *State) networkEntityGlobalKey(globalKey string, providerId corenetwork.Id) string {
 	return st.docID(globalKey + ":" + string(providerId))
 }
 

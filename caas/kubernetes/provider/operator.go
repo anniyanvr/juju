@@ -44,12 +44,13 @@ const (
 func GetOperatorPodName(
 	podAPI typedcorev1.PodInterface,
 	nsAPI typedcorev1.NamespaceInterface,
-	appName string,
-	namespace string,
+	appName,
+	namespace,
+	model string,
 ) (string, error) {
-	legacyLabels, err := utils.IsLegacyModelLabels(namespace, nsAPI)
+	legacyLabels, err := utils.IsLegacyModelLabels(namespace, model, nsAPI)
 	if err != nil {
-		return "", errors.Annotatef(err, "determining legacy label status for namespace %s", namespace)
+		return "", errors.Annotatef(err, "determining legacy label status for model %s", model)
 	}
 
 	podsList, err := podAPI.List(context.TODO(), v1.ListOptions{
@@ -386,9 +387,9 @@ func (k *kubernetesClient) OperatorExists(appName string) (caas.DeploymentState,
 	}
 	if exists || terminating {
 		if terminating {
-			logger.Tracef("operator %q exists and is terminating")
+			logger.Tracef("operator %q exists and is terminating", operatorName)
 		} else {
-			logger.Tracef("operator %q exists")
+			logger.Tracef("operator %q exists", operatorName)
 		}
 		return caas.DeploymentState{Exists: exists, Terminating: terminating}, nil
 	}

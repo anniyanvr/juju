@@ -217,12 +217,12 @@ func (e *environ) NetworkInterfaces(ctx context.ProviderCallContext, ids []insta
 					iface.NetworkIP,
 					corenetwork.WithScope(corenetwork.ScopeCloudLocal),
 					corenetwork.WithCIDR(details.cidr),
+					corenetwork.WithConfigType(corenetwork.ConfigDHCP),
 				)},
 				ShadowAddresses: shadowAddrs,
-				InterfaceType:   corenetwork.EthernetInterface,
+				InterfaceType:   corenetwork.EthernetDevice,
 				Disabled:        false,
 				NoAutoStart:     false,
-				ConfigType:      corenetwork.ConfigDHCP,
 				Origin:          corenetwork.OriginProvider,
 			})
 		}
@@ -325,16 +325,6 @@ func (e *environ) SupportsSpaces(ctx context.ProviderCallContext) (bool, error) 
 	return false, nil
 }
 
-// SupportsSpaceDiscovery implements environs.NetworkingEnviron.
-func (e *environ) SupportsSpaceDiscovery(ctx context.ProviderCallContext) (bool, error) {
-	return false, nil
-}
-
-// Spaces implements environs.NetworkingEnviron.
-func (e *environ) Spaces(ctx context.ProviderCallContext) ([]corenetwork.SpaceInfo, error) {
-	return nil, errors.NotSupportedf("spaces")
-}
-
 // SupportsContainerAddresses implements environs.NetworkingEnviron.
 func (e *environ) SupportsContainerAddresses(ctx context.ProviderCallContext) (bool, error) {
 	return false, nil
@@ -348,13 +338,6 @@ func (e *environ) AllocateContainerAddresses(context.ProviderCallContext, instan
 // ReleaseContainerAddresses implements environs.NetworkingEnviron.
 func (e *environ) ReleaseContainerAddresses(context.ProviderCallContext, []corenetwork.ProviderInterfaceInfo) error {
 	return errors.NotSupportedf("container addresses")
-}
-
-// ProviderSpaceInfo implements environs.NetworkingEnviron.
-func (*environ) ProviderSpaceInfo(
-	ctx context.ProviderCallContext, space *corenetwork.SpaceInfo,
-) (*environs.ProviderSpaceInfo, error) {
-	return nil, errors.NotSupportedf("provider space info")
 }
 
 // AreSpacesRoutable implements environs.NetworkingEnviron.

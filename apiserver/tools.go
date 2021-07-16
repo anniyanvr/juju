@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	jujuhttp "github.com/juju/http"
+	jujuhttp "github.com/juju/http/v2"
 	"github.com/juju/version/v2"
 
 	"github.com/juju/juju/apiserver/common"
@@ -25,6 +25,7 @@ import (
 	coreos "github.com/juju/juju/core/os"
 	coreseries "github.com/juju/juju/core/series"
 	"github.com/juju/juju/environs"
+	"github.com/juju/juju/environs/simplestreams"
 	envtools "github.com/juju/juju/environs/tools"
 	"github.com/juju/juju/state"
 	"github.com/juju/juju/state/binarystorage"
@@ -155,32 +156,43 @@ func (h *toolsDownloadHandler) getToolsForRequest(r *http.Request, st *state.Sta
 	// TODO(juju4) = remove this compatibility logic
 	// Looked for stored tools which are recorded for a series
 	// but which have the same os type as the wanted version.
+	// Alternatively, the request may have been for a specifc
+	// series and we need to use stored tools for the corresponding
+	// os type.
 	storageVers := vers
 	var osTypeName string
 	if vers.Number.Major == 2 && vers.Number.Minor <= 8 {
+		wantedOSType := vers.Release
+		if !coreos.IsValidOSTypeName(vers.Release) {
+			wantedOSType = coreseries.DefaultOSTypeNameFromSeries(vers.Release)
+		}
+		vers.Release = wantedOSType
+
 		all, err := storage.AllMetadata()
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
 		var osMatchVersion *version.Binary
 		for _, m := range all {
+			metaVers, err := version.ParseBinary(m.Version)
+			if err != nil {
+				return nil, 0, errors.Annotate(err, "error parsing metadata version")
+			}
+
 			// Exact match so just use that with os type name substitution.
 			if m.Version == vers.String() {
+				osMatchVersion = &metaVers
 				break
 			}
 			if osMatchVersion != nil {
 				continue
 			}
-			metaVers, err := version.ParseBinary(m.Version)
-			if err != nil {
-				return nil, 0, errors.Annotate(err, "error parsing metadata version")
-			}
-			osType, _ := coreseries.GetOSFromSeries(metaVers.Release)
-			if osType == coreos.Unknown {
-				continue
+			metaOSType := metaVers.Release
+			if !coreos.IsValidOSTypeName(metaVers.Release) {
+				metaOSType = coreseries.DefaultOSTypeNameFromSeries(metaVers.Release)
 			}
 			toCompare := metaVers
-			toCompare.Release = strings.ToLower(osType.String())
+			toCompare.Release = strings.ToLower(metaOSType)
 			if toCompare.String() == vers.String() {
 				logger.Debugf("using os based version %s for requested %s", toCompare, vers)
 				osMatchVersion = &metaVers
@@ -235,14 +247,16 @@ func (h *toolsDownloadHandler) fetchAndCacheTools(
 	if err != nil {
 		return md, nil, err
 	}
-	exactTools, err := envtools.FindExactTools(env, v.Number, v.Release, v.Arch)
+
+	ss := simplestreams.NewSimpleStreams(simplestreams.DefaultDataSourceFactory())
+	exactTools, err := envtools.FindExactTools(ss, env, v.Number, v.Release, v.Arch)
 	if err != nil {
 		return md, nil, err
 	}
 
 	// No need to verify the server's identity because we verify the SHA-256 hash.
 	logger.Infof("fetching %v agent binaries from %v", v, exactTools.URL)
-	client := jujuhttp.NewClient(jujuhttp.Config{SkipHostnameVerification: true})
+	client := jujuhttp.NewClient(jujuhttp.WithSkipHostnameVerification(true))
 	resp, err := client.Get(context.TODO(), exactTools.URL)
 	if err != nil {
 		return md, nil, err

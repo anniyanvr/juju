@@ -17,6 +17,7 @@ import (
 	"github.com/juju/utils/v2/ssh"
 	gc "gopkg.in/check.v1"
 
+	"github.com/juju/juju/apiserver/params"
 	"github.com/juju/juju/core/network"
 	"github.com/juju/juju/juju/testing"
 	jujussh "github.com/juju/juju/network/ssh"
@@ -188,6 +189,62 @@ func (s *SSHMachineSuite) SetUpTest(c *gc.C) {
 	s.PatchValue(&ssh.DefaultClient, client)
 }
 
+func (s *SSHMachineSuite) TestMaybePopulateTargetViaFieldForHostMachineTarget(c *gc.C) {
+	target := &resolvedTarget{
+		host: "10.0.0.1",
+	}
+
+	statusGetter := func(_ []string) (*params.FullStatus, error) {
+		return &params.FullStatus{
+			Machines: map[string]params.MachineStatus{
+				"0": {
+					IPAddresses: []string{
+						"10.0.0.1",
+					},
+				},
+			},
+		}, nil
+	}
+
+	err := new(sshMachine).maybePopulateTargetViaField(target, statusGetter)
+	c.Assert(err, jc.ErrorIsNil)
+
+	c.Assert(target.via, gc.IsNil, gc.Commentf("expected target.via not to be populated for a non-container target"))
+}
+
+func (s *SSHMachineSuite) TestMaybePopulateTargetViaFieldForContainerMachineTarget(c *gc.C) {
+	target := &resolvedTarget{
+		host: "252.66.6.42",
+	}
+
+	statusGetter := func(_ []string) (*params.FullStatus, error) {
+		return &params.FullStatus{
+			Machines: map[string]params.MachineStatus{
+				"0": {
+					IPAddresses: []string{
+						"10.0.0.1",
+						"252.66.6.1",
+					},
+					Containers: map[string]params.MachineStatus{
+						"0/lxd/0": {
+							IPAddresses: []string{
+								"252.66.6.42",
+							},
+						},
+					},
+				},
+			},
+		}, nil
+	}
+
+	err := new(sshMachine).maybePopulateTargetViaField(target, statusGetter)
+	c.Assert(err, jc.ErrorIsNil)
+
+	c.Assert(target.via, gc.Not(gc.IsNil), gc.Commentf("expected target.via to be populated for container target"))
+	c.Assert(target.via.user, gc.Equals, "ubuntu")
+	c.Assert(target.via.host, gc.Equals, "10.0.0.1", gc.Commentf("expected target.via.host to be set to the container's host machine address"))
+}
+
 func (s *SSHMachineSuite) setForceAPIv1(enabled bool) {
 	if enabled {
 		os.Setenv(jujuSSHClientForceAPIv1, "1")
@@ -257,11 +314,11 @@ func (s *SSHMachineSuite) setLinkLayerDevicesAddresses(c *gc.C, m *state.Machine
 	addressesArgs := []state.LinkLayerDeviceAddress{{
 		DeviceName:   "lo",
 		CIDRAddress:  "127.0.0.1/8", // will be filtered
-		ConfigMethod: network.LoopbackAddress,
+		ConfigMethod: network.ConfigLoopback,
 	}, {
 		DeviceName:   "eth0",
 		CIDRAddress:  "0.1.2.3/24", // needs to be a valid CIDR
-		ConfigMethod: network.StaticAddress,
+		ConfigMethod: network.ConfigStatic,
 	}}
 	err = m.SetDevicesAddresses(addressesArgs...)
 	c.Assert(err, jc.ErrorIsNil)

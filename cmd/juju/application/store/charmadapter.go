@@ -71,18 +71,34 @@ func NewCharmAdaptor(charmsAPI CharmsAPI, charmStoreRepoFunc CharmStoreRepoFunc,
 // and a slice of supported series are returned.
 // Resolving a CharmHub charm is only supported if the controller has a
 // Charms API version of 3 or greater.
-func (c *CharmAdaptor) ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error) {
-	resolved, err := c.charmsAPI.ResolveCharms([]apicharm.CharmToResolve{{URL: url, Origin: preferredOrigin}})
-	if errors.IsNotSupported(err) {
-		if charm.CharmHub.Matches(url.Schema) {
-			return nil, commoncharm.Origin{}, nil, errors.Trace(err)
+func (c *CharmAdaptor) ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin, switchCharm bool) (*charm.URL, commoncharm.Origin, []string, error) {
+	resolved, err := c.charmsAPI.ResolveCharms([]apicharm.CharmToResolve{{URL: url, Origin: preferredOrigin, SwitchCharm: switchCharm}})
+	if err == nil {
+		if num := len(resolved); num == 0 {
+			return nil, commoncharm.Origin{}, nil, errors.NotFoundf(url.Name)
 		}
-		return c.resolveCharmFallback(url, preferredOrigin)
+
+		// Ensure we output the error correctly from the API call.
+		if resolved[0].Error == nil {
+			res := resolved[0]
+			return res.URL, res.Origin, res.SupportedSeries, nil
+		}
+		// If we do have an API call, then set it to the error, allowing us to
+		// bubble it up the stack.
+		err = resolved[0].Error
 	}
-	if err != nil {
+
+	// In order to maintain backwards compatibility with the charmstore, we need
+	// to correctly handle charmhub vs charmstore failures.
+	// The following attempts to correctly fallback if the url is a charmhub
+	// charm, otherwise fallback to how the old client worked.
+	if charm.CharmHub.Matches(url.Schema) {
+		if errors.IsNotSupported(err) {
+			return nil, commoncharm.Origin{}, nil, errors.NewNotSupported(nil, "charmhub charms are not supported by the current controller; if you wish to use charmhub consider upgrading your controller to 2.9+.")
+		}
 		return nil, commoncharm.Origin{}, nil, errors.Trace(err)
 	}
-	return resolved[0].URL, resolved[0].Origin, resolved[0].SupportedSeries, resolved[0].Error
+	return c.resolveCharmFallback(url, preferredOrigin)
 }
 
 func (c *CharmAdaptor) resolveCharmFallback(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error) {
@@ -109,8 +125,9 @@ func (c *CharmAdaptor) resolveCharmFallback(url *charm.URL, preferredOrigin comm
 // checking it, it returns a nil charm URL.
 func (c *CharmAdaptor) ResolveBundleURL(maybeBundle *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, error) {
 	// Charm or bundle has been supplied as a URL so we resolve and
-	// deploy using the store.
-	storeCharmOrBundleURL, origin, _, err := c.ResolveCharm(maybeBundle, preferredOrigin)
+	// deploy using the store. In this case, a --switch is not possible
+	// so we pass "false" to ResolveCharm.
+	storeCharmOrBundleURL, origin, _, err := c.ResolveCharm(maybeBundle, preferredOrigin, false)
 	if err != nil {
 		return nil, commoncharm.Origin{}, errors.Trace(err)
 	}

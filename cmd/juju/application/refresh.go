@@ -16,7 +16,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/juju/gnuflag"
 	"github.com/juju/names/v4"
-	"github.com/juju/worker/v2/catacomb"
 	"gopkg.in/macaroon.v2"
 
 	"github.com/juju/juju/api"
@@ -99,7 +98,7 @@ func newRefreshCommand() *refreshCommand {
 // CharmResolver defines methods required to resolve charms, as required
 // by the refresh command.
 type CharmResolver interface {
-	ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error)
+	ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin, switchCHarm bool) (*charm.URL, commoncharm.Origin, []string, error)
 }
 
 // NewRefreshCommand returns a command which upgrades application's charm.
@@ -176,9 +175,6 @@ type refreshCommand struct {
 	// Storage is a map of storage constraints, keyed on the storage name
 	// defined in charm storage metadata, to add or update during upgrade.
 	Storage map[string]storage.Constraints
-
-	catacomb catacomb.Catacomb
-	plan     catacomb.Plan
 }
 
 const refreshDoc = `
@@ -328,6 +324,22 @@ func (c *refreshCommand) Run(ctx *cmd.Context) error {
 		return errors.Trace(err)
 	}
 
+	// Select a suitable default URL schema for charm URLs that don't
+	// provide one depending on whether the current controller supports
+	// charmhub (i.e. it is a 2.9+ controller).
+	var defaultCharmSchema = charm.CharmHub
+	if apiRoot.BestFacadeVersion("CharmHub") < 1 {
+		defaultCharmSchema = charm.CharmStore
+	}
+
+	// Ensure that the switchURL (if provided) always contains a schema. If
+	// one is missing inject the default value we selected above.
+	if c.SwitchURL != "" {
+		if c.SwitchURL, err = charm.EnsureSchema(c.SwitchURL, defaultCharmSchema); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	if c.isCharmHubWithRevision(oldOrigin.Source) {
 		return errors.Errorf("specifying a revision is not supported, please use a channel.")
 	}
@@ -345,7 +357,7 @@ func (c *refreshCommand) Run(ctx *cmd.Context) error {
 	if c.SwitchURL == "" && c.CharmPath == "" {
 		// If the charm we are refreshing is local, then we must
 		// specify a path or switch url to upgrade with.
-		if oldURL.Schema == "local" {
+		if oldURL.Schema == charm.Local.String() {
 			return errors.New("upgrading a local charm requires either --path or --switch")
 		}
 		// No new URL specified, but revision might have been.
@@ -367,16 +379,6 @@ func (c *refreshCommand) Run(ctx *cmd.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-
-	if oldOrigin.Source != commoncharm.OriginLocal {
-		// If not upgrading from a local path, display the channel we
-		// are pulling the charm from.
-		var channel string
-		if ch := oldOrigin.CharmChannel().String(); ch != "" {
-			channel = fmt.Sprintf(" from channel %s", ch)
-		}
-		ctx.Infof("Looking up metadata for %s charm %q%s", oldOrigin.Source, oldURL.Name, channel)
 	}
 
 	cfg := refresher.RefresherConfig{
@@ -408,7 +410,7 @@ func (c *refreshCommand) Run(ctx *cmd.Context) error {
 	if charmID.Origin.Source == corecharm.CharmHub || charmID.Origin.Source == corecharm.CharmStore {
 		channel = fmt.Sprintf(" in channel %s", charmID.Origin.Channel.String())
 	}
-	ctx.Infof("Added %s charm %q, revision %d%s, to the model", oldOrigin.Source, curl.Name, curl.Revision, channel)
+	ctx.Infof("Added %s charm %q, revision %d%s, to the model", charmID.Origin.Source, curl.Name, curl.Revision, channel)
 
 	// Next, upgrade resources.
 
@@ -477,12 +479,7 @@ func (c *refreshCommand) isCharmHubWithRevision(source commoncharm.OriginSource)
 	if source == commoncharm.OriginCharmHub && c.Revision > -1 {
 		return true
 	}
-	// EnsureSchema will error if input is an empty string.
-	path, err := charm.EnsureSchema(c.SwitchURL)
-	if err != nil {
-		return false
-	}
-	curl, err := charm.ParseURL(path)
+	curl, err := charm.ParseURL(c.SwitchURL)
 	if err != nil {
 		return false
 	}
@@ -545,6 +542,7 @@ func (c *refreshCommand) upgradeResources(
 	meta map[string]charmresource.Meta,
 ) (map[string]string, error) {
 	filtered, err := utils.GetUpgradeResources(
+		chID.URL,
 		resourceLister,
 		c.ApplicationName,
 		c.Resources,

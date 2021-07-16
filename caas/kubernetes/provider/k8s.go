@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/pointer"
 
 	"github.com/juju/juju/caas"
 	"github.com/juju/juju/caas/kubernetes/provider/constants"
@@ -51,7 +52,6 @@ import (
 	"github.com/juju/juju/core/application"
 	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/core/devices"
-	"github.com/juju/juju/core/network"
 	"github.com/juju/juju/core/paths"
 	"github.com/juju/juju/core/status"
 	"github.com/juju/juju/core/watcher"
@@ -185,7 +185,7 @@ func newK8sBroker(
 	}
 
 	isLegacy, err := utils.IsLegacyModelLabels(
-		newCfg.Config.Name(), k8sClient.CoreV1().Namespaces())
+		namespace, newCfg.Config.Name(), k8sClient.CoreV1().Namespaces())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -213,11 +213,48 @@ func newK8sBroker(
 			Add(utils.AnnotationModelUUIDKey(isLegacy), modelUUID),
 		isLegacyLabels: isLegacy,
 	}
-	if controllerUUID != "" {
-		// controllerUUID could be empty in add-k8s without -c because there might be no controller yet.
-		client.annotations.Add(utils.AnnotationControllerUUIDKey(isLegacy), controllerUUID)
+	if err := client.ensureNamespaceAnnotationForControllerUUID(controllerUUID, isLegacy); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return client, nil
+}
+
+func (k *kubernetesClient) ensureNamespaceAnnotationForControllerUUID(controllerUUID string, isLegacy bool) error {
+	if len(controllerUUID) == 0 {
+		// controllerUUID could be empty in add-k8s without -c because there might be no controller yet.
+		return nil
+	}
+	ns, err := k.getNamespaceByName(k.namespace)
+	if err != nil && !errors.IsNotFound(err) {
+		return errors.Trace(err)
+	}
+	if !isLegacy {
+		if ns != nil && !k8sannotations.New(ns.Annotations).HasAll(k.annotations) {
+			// This should never happen unless we changed annotations for a new juju version.
+			// But in this case, we should have already managed to fix it in upgrade steps.
+			return errors.NewNotValid(nil,
+				fmt.Sprintf("annotations %v for namespace %q must include %v", ns.Annotations, k.namespace, k.annotations),
+			)
+		}
+	}
+	annotationControllerUUIDKey := utils.AnnotationControllerUUIDKey(isLegacy)
+	k.annotations.Add(annotationControllerUUIDKey, controllerUUID)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if ns.Annotations[annotationControllerUUIDKey] == controllerUUID {
+		// No change needs to be done.
+		return nil
+	}
+	// The model was just migrated from a different controller.
+	logger.Debugf("model %q was migrated from controller %q, updating the controller annotation to %q", k.namespace,
+		ns.Annotations[annotationControllerUUIDKey], controllerUUID,
+	)
+	if err := k.ensureNamespaceAnnotations(ns); err != nil {
+		return errors.Trace(err)
+	}
+	_, err = k.client().CoreV1().Namespaces().Update(context.TODO(), ns, v1.UpdateOptions{})
+	return errors.Trace(err)
 }
 
 // GetAnnotations returns current namespace's annotations.
@@ -301,7 +338,7 @@ func (k *kubernetesClient) SetConfig(cfg *config.Config) error {
 }
 
 // SetCloudSpec is specified in the environs.Environ interface.
-func (k *kubernetesClient) SetCloudSpec(spec environscloudspec.CloudSpec) error {
+func (k *kubernetesClient) SetCloudSpec(_ context.Context, spec environscloudspec.CloudSpec) error {
 	k.lock.Lock()
 	defer k.lock.Unlock()
 
@@ -324,7 +361,7 @@ func (k *kubernetesClient) SetCloudSpec(spec environscloudspec.CloudSpec) error 
 	return nil
 }
 
-// PrepareForBootstrap prepares for bootstraping a controller.
+// PrepareForBootstrap prepares for bootstrapping a controller.
 func (k *kubernetesClient) PrepareForBootstrap(ctx environs.BootstrapContext, controllerName string) error {
 	alreadyExistErr := errors.NewAlreadyExists(nil,
 		fmt.Sprintf(`a controller called %q already exists on this k8s cluster.
@@ -360,10 +397,11 @@ Please bootstrap again and choose a different controller name.`, controllerName)
 	return errors.Trace(err)
 }
 
-// Create implements environs.BootstrapEnviron.
+// Create (environs.BootstrapEnviron) creates a new environ.
+// It must raise an error satisfying IsAlreadyExists if the
+// namespace is already used by another model.
 func (k *kubernetesClient) Create(envcontext.ProviderCallContext, environs.CreateParams) error {
-	// must raise errors.AlreadyExistsf if it's already exist.
-	return k.createNamespace(k.namespace)
+	return errors.Trace(k.createNamespace(k.namespace))
 }
 
 // Bootstrap deploys controller with mongoDB together into k8s cluster.
@@ -478,8 +516,12 @@ func (*kubernetesClient) Provider() caas.ContainerEnvironProvider {
 }
 
 // Destroy is part of the Broker interface.
-func (k *kubernetesClient) Destroy(callbacks envcontext.ProviderCallContext) (err error) {
+func (k *kubernetesClient) Destroy(ctx envcontext.ProviderCallContext) (err error) {
 	defer func() {
+		if errors.Cause(err) == context.DeadlineExceeded {
+			logger.Warningf("destroy k8s model timeout")
+			return
+		}
 		if err != nil && k8serrors.ReasonForError(err) == v1.StatusReasonUnknown {
 			logger.Warningf("k8s cluster is not accessible: %v", err)
 			err = nil
@@ -489,14 +531,14 @@ func (k *kubernetesClient) Destroy(callbacks envcontext.ProviderCallContext) (er
 	errChan := make(chan error, 1)
 	done := make(chan struct{})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	destroyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go k.deleteClusterScopeResourcesModelTeardown(ctx, &wg, errChan)
+	go k.deleteClusterScopeResourcesModelTeardown(destroyCtx, &wg, errChan)
 	wg.Add(1)
-	go k.deleteNamespaceModelTeardown(ctx, &wg, errChan)
+	go k.deleteNamespaceModelTeardown(destroyCtx, &wg, errChan)
 
 	go func() {
 		wg.Wait()
@@ -505,14 +547,14 @@ func (k *kubernetesClient) Destroy(callbacks envcontext.ProviderCallContext) (er
 
 	for {
 		select {
-		case <-callbacks.Dying():
-			return nil
 		case err = <-errChan:
 			if err != nil {
 				return errors.Trace(err)
 			}
+		case <-destroyCtx.Done():
+			return destroyCtx.Err()
 		case <-done:
-			return nil
+			return destroyCtx.Err()
 		}
 	}
 }
@@ -541,68 +583,6 @@ func (k *kubernetesClient) getStorageClass(name string) (*storagev1.StorageClass
 	return storageClasses.Get(context.TODO(), name, v1.GetOptions{})
 }
 
-func getLoadBalancerAddress(svc *core.Service) string {
-	// different cloud providers have a different way to report back the Load Balancer address.
-	// This covers the cases we know about so far.
-	lpAdd := svc.Spec.LoadBalancerIP
-	if lpAdd != "" {
-		return lpAdd
-	}
-
-	ing := svc.Status.LoadBalancer.Ingress
-	if len(ing) == 0 {
-		return ""
-	}
-
-	// It usually has only one record.
-	firstOne := ing[0]
-	if firstOne.IP != "" {
-		return firstOne.IP
-	}
-	if firstOne.Hostname != "" {
-		return firstOne.Hostname
-	}
-	return lpAdd
-}
-
-func getSvcAddresses(svc *core.Service, includeClusterIP bool) []network.ProviderAddress {
-	var netAddrs []network.ProviderAddress
-
-	addressExist := func(addr string) bool {
-		for _, v := range netAddrs {
-			if addr == v.Value {
-				return true
-			}
-		}
-		return false
-	}
-	appendUniqueAddrs := func(scope network.Scope, addrs ...string) {
-		for _, v := range addrs {
-			if v != "" && !addressExist(v) {
-				netAddrs = append(netAddrs, network.NewProviderAddress(v, network.WithScope(scope)))
-			}
-		}
-	}
-
-	t := svc.Spec.Type
-	clusterIP := svc.Spec.ClusterIP
-	switch t {
-	case core.ServiceTypeClusterIP:
-		appendUniqueAddrs(network.ScopeCloudLocal, clusterIP)
-	case core.ServiceTypeExternalName:
-		appendUniqueAddrs(network.ScopePublic, svc.Spec.ExternalName)
-	case core.ServiceTypeNodePort:
-		appendUniqueAddrs(network.ScopePublic, svc.Spec.ExternalIPs...)
-	case core.ServiceTypeLoadBalancer:
-		appendUniqueAddrs(network.ScopePublic, getLoadBalancerAddress(svc))
-	}
-	if includeClusterIP {
-		// append clusterIP as a fixed internal address.
-		appendUniqueAddrs(network.ScopeCloudLocal, clusterIP)
-	}
-	return netAddrs
-}
-
 // GetService returns the service for the specified application.
 func (k *kubernetesClient) GetService(appName string, mode caas.DeploymentMode, includeClusterIP bool) (*caas.Service, error) {
 	services := k.client().CoreV1().Services(k.namespace)
@@ -620,12 +600,23 @@ func (k *kubernetesClient) GetService(appName string, mode caas.DeploymentMode, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var result caas.Service
+	var (
+		result caas.Service
+		svc    *core.Service
+	)
 	// We may have the stateful set or deployment but service not done yet.
 	if len(servicesList.Items) > 0 {
-		service := servicesList.Items[0]
-		result.Id = string(service.GetUID())
-		result.Addresses = getSvcAddresses(&service, includeClusterIP)
+		for _, s := range servicesList.Items {
+			// Ignore any headless service for this app.
+			if !strings.HasSuffix(s.Name, "-endpoints") {
+				svc = &s
+				break
+			}
+		}
+		if svc != nil {
+			result.Id = string(svc.GetUID())
+			result.Addresses = utils.GetSvcAddresses(svc, includeClusterIP)
+		}
 	}
 
 	if mode == caas.ModeOperator {
@@ -1676,7 +1667,7 @@ func (k *kubernetesClient) configureDaemonSet(
 			Selector: &v1.LabelSelector{
 				MatchLabels: selectorLabels,
 			},
-			RevisionHistoryLimit: utils.Int32Ptr(daemonsetRevisionHistoryLimit),
+			RevisionHistoryLimit: pointer.Int32Ptr(daemonsetRevisionHistoryLimit),
 			Template: core.PodTemplateSpec{
 				ObjectMeta: v1.ObjectMeta{
 					GenerateName: deploymentName + "-",
@@ -1778,7 +1769,7 @@ func (k *kubernetesClient) configureDeployment(
 		Spec: apps.DeploymentSpec{
 			// TODO(caas): MinReadySeconds, ProgressDeadlineSeconds support.
 			Replicas:             replicas,
-			RevisionHistoryLimit: utils.Int32Ptr(deploymentRevisionHistoryLimit),
+			RevisionHistoryLimit: pointer.Int32Ptr(deploymentRevisionHistoryLimit),
 			Selector: &v1.LabelSelector{
 				MatchLabels: selectorLabels,
 			},

@@ -361,7 +361,7 @@ func (e *environSuite) TestPrepareForBootstrap(c *gc.C) {
 		gomock.Any(), gomock.Any()).Return(
 		ociIdentity.ListAvailabilityDomainsResponse{}, errors.New("got error"))
 
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapTODOContext(c)
 	err := e.env.PrepareForBootstrap(ctx, "controller-1")
 	c.Assert(err, gc.IsNil)
 
@@ -386,7 +386,7 @@ func (e *environSuite) TestCreate(c *gc.C) {
 }
 
 func (e *environSuite) TestConstraintsValidator(c *gc.C) {
-	validator, err := e.env.ConstraintsValidator(envcontext.NewCloudCallContext())
+	validator, err := e.env.ConstraintsValidator(envcontext.NewEmptyCloudCallContext())
 	c.Assert(err, jc.ErrorIsNil)
 
 	cons := constraints.MustParse("arch=amd64")
@@ -398,7 +398,7 @@ func (e *environSuite) TestConstraintsValidator(c *gc.C) {
 }
 
 func (e *environSuite) TestConstraintsValidatorEmpty(c *gc.C) {
-	validator, err := e.env.ConstraintsValidator(envcontext.NewCloudCallContext())
+	validator, err := e.env.ConstraintsValidator(envcontext.NewEmptyCloudCallContext())
 	c.Assert(err, jc.ErrorIsNil)
 
 	unsupported, err := validator.Validate(constraints.Value{})
@@ -408,7 +408,7 @@ func (e *environSuite) TestConstraintsValidatorEmpty(c *gc.C) {
 }
 
 func (e *environSuite) TestConstraintsValidatorUnsupported(c *gc.C) {
-	validator, err := e.env.ConstraintsValidator(envcontext.NewCloudCallContext())
+	validator, err := e.env.ConstraintsValidator(envcontext.NewEmptyCloudCallContext())
 	c.Assert(err, jc.ErrorIsNil)
 
 	cons := constraints.MustParse("arch=amd64 tags=foo virt-type=kvm")
@@ -419,7 +419,7 @@ func (e *environSuite) TestConstraintsValidatorUnsupported(c *gc.C) {
 }
 
 func (e *environSuite) TestConstraintsValidatorWrongArch(c *gc.C) {
-	validator, err := e.env.ConstraintsValidator(envcontext.NewCloudCallContext())
+	validator, err := e.env.ConstraintsValidator(envcontext.NewEmptyCloudCallContext())
 	c.Assert(err, jc.ErrorIsNil)
 
 	cons := constraints.MustParse("arch=ppc64el")
@@ -934,7 +934,7 @@ func (e *environSuite) TestBootstrap(c *gc.C) {
 
 	e.setupStartInstanceExpectations(true, true, gomock.Any())
 
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapTODOContext(c)
 	_, err := e.env.Bootstrap(ctx, nil,
 		environs.BootstrapParams{
 			ControllerConfig:         testing.FakeControllerConfig(),
@@ -961,7 +961,7 @@ func (e *environSuite) TestBootstrapNoAllocatePublicIP(c *gc.C) {
 
 	e.setupStartInstanceExpectations(true, false, noPublicIPMatcher{})
 
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapTODOContext(c)
 	_, err := e.env.Bootstrap(ctx, nil,
 		environs.BootstrapParams{
 			ControllerConfig:         testing.FakeControllerConfig(),
@@ -991,7 +991,7 @@ func (e *environSuite) TestBootstrapNoMatchingTools(c *gc.C) {
 	e.setupListRouteTableExpectations(vcnId, machineTags, 0)
 	e.setupListSubnetsExpectations(vcnId, "fakeRouteTableId", machineTags, 0)
 
-	ctx := envtesting.BootstrapContext(c)
+	ctx := envtesting.BootstrapTODOContext(c)
 	_, err := e.env.Bootstrap(ctx, nil,
 		environs.BootstrapParams{
 			ControllerConfig:         testing.FakeControllerConfig(),

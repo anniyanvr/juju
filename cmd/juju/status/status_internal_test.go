@@ -3905,7 +3905,7 @@ func (sm startMachine) step(c *gc.C, ctx *context) {
 	c.Assert(err, jc.ErrorIsNil)
 	cfg, err := ctx.st.ControllerConfig()
 	c.Assert(err, jc.ErrorIsNil)
-	inst, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
+	inst, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewEmptyCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
 	err = m.SetProvisioned(inst.Id(), "", "fake_nonce", hc)
 	c.Assert(err, jc.ErrorIsNil)
 }
@@ -3921,7 +3921,7 @@ func (sm startMissingMachine) step(c *gc.C, ctx *context) {
 	c.Assert(err, jc.ErrorIsNil)
 	cfg, err := ctx.st.ControllerConfig()
 	c.Assert(err, jc.ErrorIsNil)
-	_, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
+	_, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewEmptyCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
 	err = m.SetProvisioned("i-missing", "", "fake_nonce", hc)
 	c.Assert(err, jc.ErrorIsNil)
 	// lp:1558657
@@ -3947,7 +3947,7 @@ func (sam startAliveMachine) step(c *gc.C, ctx *context) {
 	c.Assert(err, jc.ErrorIsNil)
 	cfg, err := ctx.st.ControllerConfig()
 	c.Assert(err, jc.ErrorIsNil)
-	inst, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
+	inst, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewEmptyCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
 	err = m.SetProvisioned(inst.Id(), sam.displayName, "fake_nonce", hc)
 	c.Assert(err, jc.ErrorIsNil)
 }
@@ -3964,7 +3964,7 @@ func (sm startMachineWithHardware) step(c *gc.C, ctx *context) {
 	c.Assert(err, jc.ErrorIsNil)
 	cfg, err := ctx.st.ControllerConfig()
 	c.Assert(err, jc.ErrorIsNil)
-	inst, _ := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
+	inst, _ := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewEmptyCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
 	err = m.SetProvisioned(inst.Id(), "", "fake_nonce", &sm.hc)
 	c.Assert(err, jc.ErrorIsNil)
 }
@@ -3981,7 +3981,7 @@ func (sm startAliveMachineWithDisplayName) step(c *gc.C, ctx *context) {
 	c.Assert(err, jc.ErrorIsNil)
 	cfg, err := ctx.st.ControllerConfig()
 	c.Assert(err, jc.ErrorIsNil)
-	inst, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
+	inst, hc := testing.AssertStartInstanceWithConstraints(c, ctx.env, environscontext.NewEmptyCloudCallContext(), cfg.ControllerUUID(), m.Id(), cons)
 	err = m.SetProvisioned(inst.Id(), sm.displayName, "fake_nonce", hc)
 	c.Assert(err, jc.ErrorIsNil)
 	_, displayName, err := m.InstanceNames()
@@ -4052,13 +4052,13 @@ func (sa setAddresses) step(c *gc.C, ctx *context) {
 	for i, address := range sa.addresses {
 		devName := fmt.Sprintf("eth%d", i)
 		macAddr := "aa:bb:cc:dd:ee:ff"
-		configMethod := network.StaticAddress
+		configMethod := network.ConfigStatic
 		devType := network.EthernetDevice
 		if address.Scope == network.ScopeMachineLocal ||
 			address.Value == "localhost" {
 			devName = "lo"
 			macAddr = "00:00:00:00:00:00"
-			configMethod = network.LoopbackAddress
+			configMethod = network.ConfigLoopback
 			devType = network.LoopbackDevice
 		}
 		lldevs[i] = state.LinkLayerDeviceArgs{
@@ -5113,7 +5113,7 @@ func (s *StatusSuite) prepareTabularData(c *gc.C) *context {
 		setAgentStatus{"logging/1", status.Error, "somehow lost in all those logs", nil},
 		setUnitWorkloadVersion{"logging/1", "a bit too long, really"},
 		setUnitWorkloadVersion{"wordpress/0", "4.5.3"},
-		setUnitWorkloadVersion{"mysql/0", "5.7.13"},
+		setUnitWorkloadVersion{"mysql/0", "5.7.13\nanother"},
 		setUnitAsLeader{"mysql/0"},
 		setUnitAsLeader{"logging/1"},
 		setUnitAsLeader{"wordpress/0"},
@@ -5276,7 +5276,7 @@ func (s *StatusSuite) TestFormatTabularCAASModel(c *gc.C) {
 			"foo": {
 				Scale:   2,
 				Address: "54.32.1.2",
-				Version: "prefix/image:tag",
+				Version: "user/image:tag",
 				Units: map[string]unitStatus{
 					"foo/0": {
 						JujuStatusInfo: statusInfoContents{
@@ -5307,8 +5307,8 @@ func (s *StatusSuite) TestFormatTabularCAASModel(c *gc.C) {
 Model  Controller  Cloud/Region  Version
                                  
 
-App  Version    Status  Scale  Charm  Store  Channel  Rev  OS  Address    Message
-foo  image:tag            1/2                           0      54.32.1.2  
+App  Version         Status  Scale  Charm  Store  Channel  Rev  OS  Address    Message
+foo  user/image:tag            1/2                           0      54.32.1.2  
 
 Unit   Workload  Agent       Address   Ports   Message
 foo/0  active    allocating                    
@@ -5325,9 +5325,41 @@ func (s *StatusSuite) TestFormatTabularCAASModelTruncatedVersion(c *gc.C) {
 			"foo": {
 				Scale:   1,
 				Address: "54.32.1.2",
-				Version: "registry.jujucharms.com/image",
+				Version: "registry.jujucharms.com/fred/mysql/mysql_image:tag@sha256:3046a3dc76ee23417f889675bce3a4c08f223b87d1e378eeea3e7490cd27fbc5",
 				Units: map[string]unitStatus{
 					"foo/0": {
+						JujuStatusInfo: statusInfoContents{
+							Current: status.Allocating,
+						},
+						WorkloadStatusInfo: statusInfoContents{
+							Current: status.Active,
+						},
+					},
+				},
+			},
+			"bar": {
+				Charm:       "bar",
+				CharmOrigin: "charmhub",
+				Scale:       1,
+				Address:     "54.32.1.3",
+				Version:     "registry.jujucharms.com/fredbloggsthethrid/bar/image:0.5",
+				Units: map[string]unitStatus{
+					"bar/0": {
+						JujuStatusInfo: statusInfoContents{
+							Current: status.Allocating,
+						},
+						WorkloadStatusInfo: statusInfoContents{
+							Current: status.Active,
+						},
+					},
+				},
+			},
+			"baz": {
+				Scale:   1,
+				Address: "54.32.1.4",
+				Version: "docker.io/reallyreallyreallyreallyreallylong/image:0.6",
+				Units: map[string]unitStatus{
+					"baz/0": {
 						JujuStatusInfo: statusInfoContents{
 							Current: status.Allocating,
 						},
@@ -5346,10 +5378,14 @@ func (s *StatusSuite) TestFormatTabularCAASModelTruncatedVersion(c *gc.C) {
 Model  Controller  Cloud/Region  Version
                                  
 
-App  Version  Status  Scale  Charm  Store  Channel  Rev  OS  Address    Message
-foo  ...                0/1                           0      54.32.1.2  
+App  Version                         Status  Scale  Charm  Store     Channel  Rev  OS  Address    Message
+bar  res:image:0.5                             0/1         charmhub             0      54.32.1.3  
+baz  .../image:0.6                             0/1                              0      54.32.1.4  
+foo  .../mysql/mysql_image:tag@3...            0/1                              0      54.32.1.2  
 
 Unit   Workload  Agent       Address  Ports  Message
+bar/0  active    allocating                  
+baz/0  active    allocating                  
 foo/0  active    allocating                  
 `[1:])
 }

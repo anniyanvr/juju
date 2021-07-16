@@ -935,27 +935,18 @@ func (a *Application) extraPeerRelations(newMeta *charm.Meta) map[string]charm.R
 func (a *Application) checkRelationsOps(ch *Charm, relations []*Relation) ([]txn.Op, error) {
 	asserts := make([]txn.Op, 0, len(relations))
 
-	isPeerToItself := func(ep Endpoint) bool {
-		// We do not want to prevent charm upgrade when endpoint relation is
-		// peer-scoped and there is only one unit of this application.
-		// Essentially, this is the corner case when a unit relates to itself.
-		// For example, in this case, we want to allow charm upgrade, for e.g.
-		// interface name change does not affect anything.
-		units, err := a.AllUnits()
-		if err != nil {
-			// Whether we could get application units does not matter.
-			// We are only interested in thinking further if we can get units.
-			return false
-		}
-		return len(units) == 1 && isPeer(ep)
-	}
-
 	// All relations must still exist and their endpoints are implemented by the charm.
 	for _, rel := range relations {
 		if ep, err := rel.Endpoint(a.doc.Name); err != nil {
 			return nil, err
 		} else if !ep.ImplementedBy(ch) {
-			if !isPeerToItself(ep) {
+			// When switching charms, we should allow peer
+			// relations to be broken (e.g. because a newer charm
+			// version removes a particular peer relation) even if
+			// they are already established as those particular
+			// relations will become irrelevant once the upgrade is
+			// complete.
+			if !isPeer(ep) {
 				return nil, errors.Errorf("would break relation %q", rel)
 			}
 		}
@@ -1062,6 +1053,25 @@ func (a *Application) checkStorageUpgrade(newMeta, oldMeta *charm.Meta, units []
 		}
 	}
 	return ops, nil
+}
+
+// IsSidecar returns true when using new CAAS charms in sidecar mode.
+func (a *Application) IsSidecar() (bool, error) {
+	ch, _, err := a.Charm()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	meta := ch.Meta()
+	if meta == nil {
+		return false, nil
+	}
+	m, err := a.st.Model()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	// TODO(sidecar): Determine a better way represent this.
+	return m.Type() == ModelTypeCAAS && corecharm.Format(ch) == corecharm.FormatV2, nil
 }
 
 // changeCharmOps returns the operations necessary to set a application's
@@ -1184,12 +1194,26 @@ func (a *Application) changeCharmOps(
 
 	ops = append(ops, incCharmModifiedVersionOps(a.doc.DocID)...)
 
-	// Add any extra peer relations that need creation.
-	newPeers := a.extraPeerRelations(ch.Meta())
-	peerOps, err := a.st.addPeerRelationsOps(a.doc.Name, newPeers)
+	// Get all relations - we need to check them later.
+	relations, err := a.Relations()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Remove any stale peer relation entries when switching charms
+	removeStalePeerOps, err := a.st.removeStalePeerRelationsOps(a.doc.Name, relations, ch.Meta())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ops = append(ops, removeStalePeerOps...)
+
+	// Add any extra peer relations that need creation.
+	newPeers := a.extraPeerRelations(ch.Meta())
+	addPeerOps, err := a.st.addPeerRelationsOps(a.doc.Name, newPeers)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ops = append(ops, addPeerOps...)
 
 	if len(resourceIDs) > 0 {
 		// Collect pending resource resolution operations.
@@ -1200,15 +1224,9 @@ func (a *Application) changeCharmOps(
 		ops = append(ops, resOps...)
 	}
 
-	// Get all relations - we need to check them later.
-	relations, err := a.Relations()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	// Make sure the relation count does not change.
 	sameRelCount := bson.D{{"relationcount", len(relations)}}
 
-	ops = append(ops, peerOps...)
 	// Update the relation count as well.
 	ops = append(ops, txn.Op{
 		C:      applicationsC,
@@ -1477,7 +1495,8 @@ func (a *Application) SetCharm(cfg SetCharmConfig) (err error) {
 	// this check. Newer charms written for multi-series have a URL
 	// with series = "".
 	if cfg.Charm.URL().Series != "" {
-		if cfg.Charm.URL().Series != a.doc.Series {
+		// Allow series change when switching to charmhub charms.
+		if cfg.Charm.URL().Schema != "ch" && cfg.Charm.URL().Series != a.doc.Series {
 			return errors.Errorf("cannot change an application's series")
 		}
 	} else if !cfg.ForceSeries {

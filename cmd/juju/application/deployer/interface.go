@@ -152,7 +152,7 @@ type Bundle interface {
 type Resolver interface {
 	GetBundle(*charm.URL, commoncharm.Origin, string) (charm.Bundle, error)
 	ResolveBundleURL(*charm.URL, commoncharm.Origin) (*charm.URL, commoncharm.Origin, error)
-	ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin) (*charm.URL, commoncharm.Origin, []string, error)
+	ResolveCharm(url *charm.URL, preferredOrigin commoncharm.Origin, switchCharm bool) (*charm.URL, commoncharm.Origin, []string, error)
 }
 
 type ModelConfigGetter interface {
@@ -183,4 +183,10 @@ type ModelCommand interface {
 	// the filesystem, either delegating to calling os functions
 	// or functions which always return an error.
 	Filesystem() modelcmd.Filesystem
+}
+
+// CharmReader aims to read a charm from the filesystem.
+type CharmReader interface {
+	// ReadCharm reads a given charm from the filesystem.
+	ReadCharm(string) (charm.Charm, error)
 }

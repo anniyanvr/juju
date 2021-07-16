@@ -537,7 +537,7 @@ func (s *ApplicationSuite) assignUnitOnMachineWithSpaceToApplication(c *gc.C, a 
 	err = m1.SetDevicesAddresses(state.LinkLayerDeviceAddress{
 		DeviceName:   "enp5s0",
 		CIDRAddress:  "10.0.254.42/24",
-		ConfigMethod: network.StaticAddress,
+		ConfigMethod: network.ConfigStatic,
 	})
 	c.Assert(err, gc.IsNil)
 
@@ -679,6 +679,18 @@ func (s *ApplicationSuite) TestClientApplicationSetCharmWrongOS(c *gc.C) {
 	c.Assert(err, gc.ErrorMatches, `cannot upgrade application "application" to charm "cs:multi-series-windows-1": OS "Ubuntu" not supported by charm`)
 }
 
+func (s *ApplicationSuite) TestSetCharmChangeSeriesWhenMovingFromCharmstoreToCharmhub(c *gc.C) {
+	// Moving from a cs to a ch charm should not prevent us from changing the series.
+	chCharm := state.AddTestingCharmhubCharmForSeries(c, s.State, "quantal", "multi-series")
+	cfg := state.SetCharmConfig{
+		Charm:      chCharm,
+		ForceUnits: true,
+	}
+
+	err := s.mysql.SetCharm(cfg)
+	c.Assert(err, jc.ErrorIsNil, gc.Commentf("expected SetCharm to work with different series when switching from a charmstore to a charmhub charm"))
+}
+
 func (s *ApplicationSuite) TestSetCharmPreconditions(c *gc.C) {
 	logging := s.AddTestingCharm(c, "logging")
 	cfg := state.SetCharmConfig{Charm: logging}
@@ -727,6 +739,13 @@ func (s *ApplicationSuite) TestSetCharmUpdatesBindings(c *gc.C) {
 	})
 }
 
+var metaRelationConsumer = `
+name: sqlvampire
+summary: "connects to an sql server"
+description: "lorem ipsum"
+requires:
+  server: mysql
+`
 var metaBase = `
 name: mysql
 summary: "Fake MySQL Database engine"
@@ -769,6 +788,7 @@ name: mysql
 description: none
 summary: none
 provides:
+  server: mysql
   kludge: mysql
 requires:
   client: mysql
@@ -796,6 +816,15 @@ requires:
   client: mysql
 peers:
   kludge: mysql
+`
+var metaRemoveNonPeerRelation = `
+name: mysql
+summary: "Fake MySQL Database engine"
+description: "Complete with nonsense relations"
+requires:
+  client: mysql
+peers:
+  cluster: mysql
 `
 var metaExtraEndpoints = `
 name: mysql
@@ -830,7 +859,10 @@ var setCharmEndpointsTests = []struct {
 }, {
 	summary: "different peer",
 	meta:    metaDifferentPeer,
-	err:     `cannot upgrade application "fakemysql" to charm "local:quantal/quantal-mysql-5": would break relation "fakemysql:cluster"`,
+}, {
+	summary: "attempt to break existing non-peer relations",
+	meta:    metaRemoveNonPeerRelation,
+	err:     `.*would break relation "fakeother:server fakemysql:server"`,
 }, {
 	summary: "same relations ok",
 	meta:    metaBase,
@@ -843,8 +875,29 @@ func (s *ApplicationSuite) TestSetCharmChecksEndpointsWithoutRelations(c *gc.C) 
 	revno := 2
 	ms := s.AddMetaCharm(c, "mysql", metaBase, revno)
 	app := s.AddTestingApplication(c, "fakemysql", ms)
+	appServerEP, err := app.Endpoint("server")
+	c.Assert(err, jc.ErrorIsNil)
+
+	otherCharm := s.AddMetaCharm(c, "dummy", metaRelationConsumer, 42)
+	otherApp := s.AddTestingApplication(c, "fakeother", otherCharm)
+	otherServerEP, err := otherApp.Endpoint("server")
+	c.Assert(err, jc.ErrorIsNil)
+
+	// Add two mysql units so that peer relations get established and we
+	// can check that we are allowed to break them when we upgrade.
+	_, err = app.AddUnit(state.AddUnitParams{})
+	c.Assert(err, jc.ErrorIsNil)
+	_, err = app.AddUnit(state.AddUnitParams{})
+	c.Assert(err, jc.ErrorIsNil)
+
+	// Add a unit for the other application and establish a relation.
+	_, err = otherApp.AddUnit(state.AddUnitParams{})
+	c.Assert(err, jc.ErrorIsNil)
+	_, err = s.State.AddRelation(appServerEP, otherServerEP)
+	c.Assert(err, jc.ErrorIsNil)
+
 	cfg := state.SetCharmConfig{Charm: ms}
-	err := app.SetCharm(cfg)
+	err = app.SetCharm(cfg)
 	c.Assert(err, jc.ErrorIsNil)
 
 	for i, t := range setCharmEndpointsTests {
@@ -2090,6 +2143,10 @@ const onePeerMeta = `
 peers:
   cluster: mysql
 `
+const onePeerAltMeta = `
+peers:
+  minion: helper
+`
 const twoPeersMeta = `
 peers:
   cluster: mysql
@@ -2128,6 +2185,46 @@ func (s *ApplicationSuite) TestNewPeerRelationsAddedOnUpgrade(c *gc.C) {
 	err = s.mysql.SetCharm(cfg)
 	c.Assert(err, jc.ErrorIsNil)
 	rels := s.assertApplicationRelations(c, s.mysql, "mysql:cluster", "mysql:loadbalancer")
+
+	// Check state consistency by attempting to destroy the application.
+	err = s.mysql.Destroy()
+	c.Assert(err, jc.ErrorIsNil)
+	assertRemoved(c, s.mysql)
+
+	// Check the peer relations got destroyed as well.
+	for _, rel := range rels {
+		err = rel.Refresh()
+		c.Assert(err, jc.Satisfies, errors.IsNotFound)
+	}
+}
+
+func (s *ApplicationSuite) TestStalePeerRelationsRemovedOnUpgrade(c *gc.C) {
+	// Original mysql charm has no peer relations.
+	// oldCh is mysql + the peer relation "mysql:cluster"
+	// newCh is mysql + the peer relation "mysql:minion"
+	oldCh := s.AddMetaCharm(c, "mysql", mysqlBaseMeta+onePeerMeta, 2)
+	newCh := s.AddMetaCharm(c, "mysql", mysqlBaseMeta+onePeerAltMeta, 42)
+
+	// No relations joined yet.
+	s.assertApplicationRelations(c, s.mysql)
+
+	cfg := state.SetCharmConfig{Charm: oldCh}
+	err := s.mysql.SetCharm(cfg)
+	c.Assert(err, jc.ErrorIsNil)
+	s.assertApplicationRelations(c, s.mysql, "mysql:cluster")
+
+	// Since the two charms have different URLs, the following SetCharm call
+	// emulates a "juju refresh --switch" request. We expect that any prior
+	// peer relations that are not referenced by the new charm metadata
+	// to be dropped and any new peer relations to be created.
+	cfg = state.SetCharmConfig{
+		Charm:      newCh,
+		ForceUnits: true,
+	}
+	err = s.mysql.SetCharm(cfg)
+	c.Assert(err, jc.ErrorIsNil)
+
+	rels := s.assertApplicationRelations(c, s.mysql, "mysql:minion")
 
 	// Check state consistency by attempting to destroy the application.
 	err = s.mysql.Destroy()
@@ -3070,7 +3167,7 @@ func (s *ApplicationSuite) TestDestroyQueuesResourcesCleanup(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	const content = "abc"
 	res := resourcetesting.NewCharmResource(c, "blob", content)
-	outRes, err := rSt.SetResource(s.mysql.Name(), "user", res, strings.NewReader(content))
+	outRes, err := rSt.SetResource(s.mysql.Name(), "user", res, strings.NewReader(content), state.IncrementCharmModifiedVersion)
 	c.Assert(err, jc.ErrorIsNil)
 	storagePath := state.ResourceStoragePath(c, s.State, outRes.ID)
 	c.Assert(state.IsBlobStored(c, s.State, storagePath), jc.IsTrue)
@@ -3100,7 +3197,7 @@ func (s *ApplicationSuite) TestDestroyWithPlaceholderResources(c *gc.C) {
 	rSt, err := s.State.Resources()
 	c.Assert(err, jc.ErrorIsNil)
 	res := resourcetesting.NewPlaceholderResource(c, "blob", s.mysql.Name())
-	outRes, err := rSt.SetResource(s.mysql.Name(), "user", res.Resource, nil)
+	outRes, err := rSt.SetResource(s.mysql.Name(), "user", res.Resource, nil, state.IncrementCharmModifiedVersion)
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(outRes.IsPlaceholder(), jc.IsTrue)
 
@@ -3128,12 +3225,10 @@ func uint64p(val uint64) *uint64 {
 }
 
 func (s *ApplicationSuite) TestConstraints(c *gc.C) {
-	amdArch := "amd64"
+	// Constraints are initially empty (for now).
 	cons, err := s.mysql.Constraints()
 	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(cons, jc.DeepEquals, constraints.Value{
-		Arch: &amdArch,
-	})
+	c.Assert(&cons, jc.Satisfies, constraints.IsEmpty)
 
 	// Constraints can be set.
 	cons2 := constraints.Value{Mem: uint64p(4096)}
@@ -3164,30 +3259,15 @@ func (s *ApplicationSuite) TestConstraints(c *gc.C) {
 	mysql := s.AddTestingApplication(c, s.mysql.Name(), ch)
 	cons6, err := mysql.Constraints()
 	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(cons6, jc.DeepEquals, constraints.Value{
-		Arch: &amdArch,
-	})
+	c.Assert(&cons6, jc.Satisfies, constraints.IsEmpty)
 }
 
 func (s *ApplicationSuite) TestArchConstraints(c *gc.C) {
 	amdArch := "amd64"
-	cons, err := s.mysql.Constraints()
-	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(cons, jc.DeepEquals, constraints.Value{
-		Arch: &amdArch,
-	})
-
-	// Constraints can not be set if it already exists and is different than
-	// the default architecture.
 	armArch := "arm64"
-	cons1 := constraints.Value{Arch: &armArch}
-	err = s.mysql.SetConstraints(cons1)
-	c.Assert(err, gc.ErrorMatches, "changing architecture \\(amd64\\) not supported")
-
-	// Constraints can be set.
 
 	cons2 := constraints.Value{Arch: &amdArch}
-	err = s.mysql.SetConstraints(cons2)
+	err := s.mysql.SetConstraints(cons2)
 	c.Assert(err, jc.ErrorIsNil)
 	cons3, err := s.mysql.Constraints()
 	c.Assert(err, jc.ErrorIsNil)
@@ -3211,9 +3291,7 @@ func (s *ApplicationSuite) TestArchConstraints(c *gc.C) {
 	mysql := s.AddTestingApplication(c, s.mysql.Name(), ch)
 	cons6, err := mysql.Constraints()
 	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(cons6, jc.DeepEquals, constraints.Value{
-		Arch: &amdArch,
-	})
+	c.Assert(constraints.IsEmpty(&cons6), jc.IsTrue)
 }
 
 func (s *ApplicationSuite) TestSetInvalidConstraints(c *gc.C) {
@@ -3255,11 +3333,7 @@ func (s *ApplicationSuite) TestConstraintsLifecycle(c *gc.C) {
 
 	scons, err := s.mysql.Constraints()
 	c.Assert(err, jc.ErrorIsNil)
-
-	amdArch := "amd64"
-	c.Assert(scons, jc.DeepEquals, constraints.Value{
-		Arch: &amdArch,
-	})
+	c.Assert(&scons, jc.Satisfies, constraints.IsEmpty)
 
 	// Removed (== Dead, for a application).
 	c.Assert(unit.EnsureDead(), jc.ErrorIsNil)
@@ -3900,6 +3974,7 @@ func (s *ApplicationSuite) TestSetCharmExtraBindingsUseDefaults(c *gc.C) {
 
 	oldCharm := s.AddMetaCharm(c, "mysql", metaDifferentProvider, 42)
 	oldBindings := map[string]string{
+		"server": dbSpace.Id(),
 		"kludge": dbSpace.Id(),
 		"client": dbSpace.Id(),
 	}
@@ -3908,6 +3983,7 @@ func (s *ApplicationSuite) TestSetCharmExtraBindingsUseDefaults(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	effectiveOld := map[string]string{
 		"":        network.AlphaSpaceId,
+		"server":  dbSpace.Id(),
 		"kludge":  dbSpace.Id(),
 		"client":  dbSpace.Id(),
 		"cluster": network.AlphaSpaceId,
@@ -3923,11 +3999,11 @@ func (s *ApplicationSuite) TestSetCharmExtraBindingsUseDefaults(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	effectiveNew := map[string]string{
 		"": network.AlphaSpaceId,
-		// These two should be preserved from oldCharm.
+		// These three should be preserved from oldCharm.
 		"client":  dbSpace.Id(),
+		"server":  dbSpace.Id(),
 		"cluster": network.AlphaSpaceId,
-		// "kludge" is missing in newMeta, "server" is new and gets the default.
-		"server": network.AlphaSpaceId,
+		// "kludge" is missing in newMeta
 		// All the remaining are new and use the empty default.
 		"foo":  network.AlphaSpaceId,
 		"baz":  network.AlphaSpaceId,
@@ -4008,9 +4084,9 @@ func (s *ApplicationSuite) TestRenamePeerRelationOnUpgradeWithOneUnit(c *gc.C) {
 func (s *ApplicationSuite) TestRenamePeerRelationOnUpgradeWithMoreThanOneUnit(c *gc.C) {
 	obtainedV, err := s.setupApplicationWithUnitsForUpgradeCharmScenario(c, 2)
 
-	// ensure upgrade did not happen
-	c.Assert(err, gc.ErrorMatches, `*would break relation "mysql:replication"*`)
-	c.Assert(s.mysql.CharmModifiedVersion() == obtainedV, jc.IsTrue)
+	// ensure upgrade happened
+	c.Assert(err, jc.ErrorIsNil)
+	c.Assert(s.mysql.CharmModifiedVersion() == obtainedV+1, jc.IsTrue)
 }
 
 func (s *ApplicationSuite) TestWatchCharmConfig(c *gc.C) {
@@ -4997,7 +5073,7 @@ func (s *ApplicationSuite) TestDeployedMachinesNotAssignedUnit(c *gc.C) {
 	c.Assert(machines, gc.HasLen, 0)
 }
 
-func (s *ApplicationSuite) TestCAASEmbeddedCharm(c *gc.C) {
+func (s *ApplicationSuite) TestCAASSidecarCharm(c *gc.C) {
 	st := s.Factory.MakeModel(c, &factory.ModelParams{
 		Name: "caas-model",
 		Type: state.ModelTypeCAAS,
@@ -5022,12 +5098,12 @@ resources:
 
 	unit, err := app.AddUnit(state.AddUnitParams{})
 	c.Assert(err, jc.ErrorIsNil)
-	embedded, err := unit.IsEmbedded()
+	sidecar, err := unit.IsSidecar()
 	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(embedded, jc.IsTrue)
+	c.Assert(sidecar, jc.IsTrue)
 }
 
-func (s *ApplicationSuite) TestCAASNonEmbeddedCharm(c *gc.C) {
+func (s *ApplicationSuite) TestCAASNonSidecarCharm(c *gc.C) {
 	st := s.Factory.MakeModel(c, &factory.ModelParams{
 		Name: "caas-model",
 		Type: state.ModelTypeCAAS,
@@ -5049,9 +5125,9 @@ deployment:
 
 	unit, err := app.AddUnit(state.AddUnitParams{})
 	c.Assert(err, jc.ErrorIsNil)
-	embedded, err := unit.IsEmbedded()
+	sidecar, err := unit.IsSidecar()
 	c.Assert(err, jc.ErrorIsNil)
-	c.Assert(embedded, jc.IsFalse)
+	c.Assert(sidecar, jc.IsFalse)
 }
 
 func (s *ApplicationSuite) TestWatchApplicationConfigSettingsHash(c *gc.C) {

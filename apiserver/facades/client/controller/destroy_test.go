@@ -55,7 +55,7 @@ func (s *destroyControllerSuite) SetUpTest(c *gc.C) {
 	s.authorizer = apiservertesting.FakeAuthorizer{
 		Tag: s.AdminUserTag(c),
 	}
-	testController, err := controller.NewControllerAPIv9(
+	testController, err := controller.NewControllerAPIv10(
 		facadetest.Context{
 			State_:     s.State,
 			StatePool_: s.StatePool,
@@ -141,7 +141,7 @@ func (s *destroyControllerSuite) TestDestroyControllerLeavesBlocksIfNotKillAll(c
 }
 
 func (s *destroyControllerSuite) TestDestroyControllerNoHostedModels(c *gc.C) {
-	err := common.DestroyModel(common.NewModelManagerBackend(s.otherModel, s.StatePool), nil, nil, nil)
+	err := common.DestroyModel(common.NewModelManagerBackend(s.otherModel, s.StatePool), nil, nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 	c.Assert(s.otherModel.Refresh(), jc.ErrorIsNil)
 	c.Assert(s.otherModel.Life(), gc.Equals, state.Dying)
@@ -157,7 +157,7 @@ func (s *destroyControllerSuite) TestDestroyControllerNoHostedModels(c *gc.C) {
 }
 
 func (s *destroyControllerSuite) TestDestroyControllerErrsOnNoHostedModelsWithBlock(c *gc.C) {
-	err := common.DestroyModel(common.NewModelManagerBackend(s.otherModel, s.StatePool), nil, nil, nil)
+	err := common.DestroyModel(common.NewModelManagerBackend(s.otherModel, s.StatePool), nil, nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	s.BlockDestroyModel(c, "TestBlockDestroyModel")
@@ -171,7 +171,7 @@ func (s *destroyControllerSuite) TestDestroyControllerErrsOnNoHostedModelsWithBl
 }
 
 func (s *destroyControllerSuite) TestDestroyControllerNoHostedModelsWithBlockFail(c *gc.C) {
-	err := common.DestroyModel(common.NewModelManagerBackend(s.otherModel, s.StatePool), nil, nil, nil)
+	err := common.DestroyModel(common.NewModelManagerBackend(s.otherModel, s.StatePool), nil, nil, nil, nil)
 	c.Assert(err, jc.ErrorIsNil)
 
 	s.BlockDestroyModel(c, "TestBlockDestroyModel")

@@ -47,7 +47,6 @@ import (
 	"github.com/juju/juju/core/status"
 	"github.com/juju/juju/environs"
 	"github.com/juju/juju/environs/bootstrap"
-	"github.com/juju/juju/feature"
 	"github.com/juju/juju/state"
 	"github.com/juju/juju/state/stateenvirons"
 	"github.com/juju/juju/storage"
@@ -145,12 +144,19 @@ func newFacadeBase(ctx facade.Context) (*APIBase, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	clientLogger := logger.Child("client")
+	options := []charmhub.Option{
+		// TODO (stickupkid): Get the http transport from the facade context
+		charmhub.WithHTTPTransport(charmhub.DefaultHTTPTransport),
+	}
+
 	var chCfg charmhub.Config
 	chURL, ok := modelCfg.CharmHubURL()
 	if ok {
-		chCfg, err = charmhub.CharmHubConfigFromURL(chURL, logger.Child("client"))
+		chCfg, err = charmhub.CharmHubConfigFromURL(chURL, clientLogger, options...)
 	} else {
-		chCfg, err = charmhub.CharmHubConfig(logger.Child("client"))
+		chCfg, err = charmhub.CharmHubConfig(clientLogger, options...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -400,13 +406,6 @@ func caasPrecheck(
 	registry storage.ProviderRegistry,
 	caasBroker caasBrokerInterface,
 ) error {
-	if ch.Meta().Deployment != nil && ch.Meta().Deployment.DeploymentMode == charm.ModeOperator {
-		if !controllerCfg.Features().Contains(feature.K8sOperators) {
-			return errors.Errorf(
-				"feature flag %q is required for deploying container operator charms", feature.K8sOperators,
-			)
-		}
-	}
 	if len(args.AttachStorage) > 0 {
 		return errors.Errorf(
 			"AttachStorage may not be specified for container models",
@@ -434,11 +433,11 @@ func caasPrecheck(
 	}
 
 	// For older charms, operator-storage model config is mandatory.
-	if k8s.RequireOperatorStorage(ch.Meta().MinJujuVersion) {
+	if k8s.RequireOperatorStorage(ch) {
 		storageClassName, _ := cfg.AllAttrs()[k8sconstants.OperatorStorageKey].(string)
 		if storageClassName == "" {
 			return errors.New(
-				"deploying a Kubernetes application requires a suitable storage class.\n" +
+				"deploying this Kubernetes application requires a suitable storage class.\n" +
 					"None have been configured. Set the operator-storage model config to " +
 					"specify which storage class should be used to allocate operator storage.\n" +
 					"See https://discourse.jujucharms.com/t/getting-started/152.",
@@ -683,17 +682,26 @@ func parseCharmSettings(modelType state.ModelType, ch Charm, appName string, con
 		return nil, nil, nil, errors.Trace(err)
 	}
 
-	charmSettings := make(charm.Settings)
-	if len(charmYamlConfig) > 0 {
-		if charmSettings, err = ch.Config().ParseSettingsYAML([]byte(charmYamlConfig), appName); err != nil {
-			// Check if this is 'juju get' output and parse it as such
-			jujuGetSettings, pErr := charmConfigFromYamlConfigValues(charmYamlConfig)
-			if pErr != nil {
-				// Not 'juju output' either; return original error
-				return nil, nil, nil, errors.Trace(err)
-			}
-			charmSettings = jujuGetSettings
+	// If there isn't a charm YAML, then we can just return the charmConfig as
+	// the settings and no need to attempt to parse an empty yaml.
+	if len(charmYamlConfig) == 0 {
+		settings, err := ch.Config().ParseSettingsStrings(charmConfig)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
 		}
+		return appConfig, appCfgSchema, settings, nil
+	}
+
+	var charmSettings charm.Settings
+	// Parse the charm YAML and check the yaml against the charm config.
+	if charmSettings, err = ch.Config().ParseSettingsYAML([]byte(charmYamlConfig), appName); err != nil {
+		// Check if this is 'juju get' output and parse it as such
+		jujuGetSettings, pErr := charmConfigFromYamlConfigValues(charmYamlConfig)
+		if pErr != nil {
+			// Not 'juju output' either; return original error
+			return nil, nil, nil, errors.Trace(err)
+		}
+		charmSettings = jujuGetSettings
 	}
 
 	// Entries from the string-based config map always override any entries
@@ -1267,7 +1275,7 @@ func (api *APIBase) Unexpose(args params.ApplicationUnexpose) error {
 // AddUnits adds a given number of units to an application.
 func (api *APIBase) AddUnits(args params.AddApplicationUnits) (params.AddApplicationUnitsResults, error) {
 	if api.modelType == state.ModelTypeCAAS {
-		return params.AddApplicationUnitsResults{}, errors.NotSupportedf("adding units on a non-container model")
+		return params.AddApplicationUnitsResults{}, errors.NotSupportedf("adding units to a container-based model")
 	}
 
 	// TODO(wallyworld) - enable-ha is how we add new controllers at the moment

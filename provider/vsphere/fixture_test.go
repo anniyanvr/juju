@@ -4,6 +4,7 @@
 package vsphere_test
 
 import (
+	stdcontext "context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,7 @@ func (s *ProviderFixture) SetUpTest(c *gc.C) {
 	s.provider = vsphere.NewEnvironProvider(vsphere.EnvironProviderConfig{
 		Dial: newMockDialFunc(&s.dialStub, s.client),
 	})
-	s.callCtx = context.NewCloudCallContext()
+	s.callCtx = context.NewEmptyCloudCallContext()
 }
 
 type EnvironFixture struct {
@@ -58,7 +59,7 @@ func (s *EnvironFixture) SetUpTest(c *gc.C) {
 		s.imageServer.Close()
 	})
 
-	env, err := s.provider.Open(environs.OpenParams{
+	env, err := s.provider.Open(stdcontext.TODO(), environs.OpenParams{
 		Cloud: fakeCloudSpec(),
 		Config: fakeConfig(c, coretesting.Attrs{
 			"image-metadata-url": s.imageServer.URL,
@@ -69,7 +70,7 @@ func (s *EnvironFixture) SetUpTest(c *gc.C) {
 
 	// Make sure we don't fall back to the public image sources.
 	s.PatchValue(&imagemetadata.DefaultUbuntuBaseURL, "")
-	s.callCtx = context.NewCloudCallContext()
+	s.callCtx = context.NewEmptyCloudCallContext()
 }
 
 func serveImageMetadata(requests *[]*http.Request) *httptest.Server {
